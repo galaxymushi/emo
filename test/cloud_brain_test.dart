@@ -23,6 +23,14 @@ String chatBody(String content) => jsonEncode({
     });
 
 void main() {
+  group('CloudProvider presets', () {
+    test('Gemini default model is a current, non-retired model', () {
+      expect(CloudProvider.gemini.model, isNot('gemini-2.5-flash'));
+      expect(CloudProvider.gemini.model, isNotEmpty);
+      expect(CloudProvider.openrouter.model, isNot('google/gemini-2.5-flash'));
+    });
+  });
+
   group('CloudBrain', () {
     test('turns a paraphrase into a real device intent', () async {
       http.Request? sent;

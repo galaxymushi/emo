@@ -28,7 +28,7 @@ class CloudProvider {
     name: 'Google Gemini',
     endpoint:
         'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.8-flash',
     keyUrl: 'https://aistudio.google.com/app/apikey',
   );
 
@@ -44,7 +44,7 @@ class CloudProvider {
     id: 'openrouter',
     name: 'OpenRouter',
     endpoint: 'https://openrouter.ai/api/v1/chat/completions',
-    model: 'google/gemini-2.5-flash',
+    model: 'google/gemini-3.8-flash',
     keyUrl: 'https://openrouter.ai/keys',
   );
 
