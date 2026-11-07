@@ -83,6 +83,8 @@ IconData emoIcon(String key) {
       return Icons.wb_sunny_rounded;
     case 'help':
       return Icons.help_outline_rounded;
+    case 'cloud':
+      return Icons.cloud_outlined;
     case 'sparkle':
     default:
       return Icons.auto_awesome_rounded;

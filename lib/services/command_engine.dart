@@ -67,6 +67,12 @@ class CommandParser {
     bool has(String word) =>
         RegExp('\\b${RegExp.escape(word)}\\b').hasMatch(lower);
     bool hasAny(List<String> words) => words.any(has);
+    final asksAboutState = RegExp(
+      r'^(what|how|is|are|am|do|does|did|check|show|tell me)\b',
+    ).hasMatch(lower);
+    final hasActionVerb = RegExp(
+      r'\b(turn|switch|enable|disable|activate|deactivate|start|stop|kill|power)\b',
+    ).hasMatch(lower);
 
     if (text.isEmpty) {
       return ParsedCommand(kind: IntentKind.unknown, raw: text);
@@ -186,20 +192,32 @@ class CommandParser {
 
     if (hasAny(['torch', 'flashlight', 'flash light', 'flash'])) {
       final on = _off.hasMatch(lower) ? false : (_on.hasMatch(lower) ? true : null);
+      if (asksAboutState && !hasActionVerb) {
+        return ParsedCommand(kind: IntentKind.torch, raw: text, mode: 'status');
+      }
       return ParsedCommand(kind: IntentKind.torch, raw: text, on: on);
     }
 
     if (hasAny(['wi-fi', 'wifi', 'wlan', 'wireless'])) {
       final on = _off.hasMatch(lower) ? false : (_on.hasMatch(lower) ? true : null);
+      if (asksAboutState && !hasActionVerb) {
+        return ParsedCommand(kind: IntentKind.wifi, raw: text, mode: 'status');
+      }
       return ParsedCommand(kind: IntentKind.wifi, raw: text, on: on);
     }
 
     if (hasAny(['bluetooth', 'bt', 'headphones'])) {
       final on = _off.hasMatch(lower) ? false : (_on.hasMatch(lower) ? true : null);
+      if (asksAboutState && !hasActionVerb) {
+        return ParsedCommand(kind: IntentKind.bluetooth, raw: text, mode: 'status');
+      }
       return ParsedCommand(kind: IntentKind.bluetooth, raw: text, on: on);
     }
 
     if (hasAny(['do not disturb', 'dnd', 'silent mode', 'mute notifications', 'focus mode'])) {
+      if (asksAboutState && !hasActionVerb && !lower.contains('priority')) {
+        return ParsedCommand(kind: IntentKind.dnd, raw: text, mode: 'status');
+      }
       final mode = lower.contains('priority')
           ? 'priority'
           : (_off.hasMatch(lower) ? 'off' : 'none');
@@ -215,6 +233,11 @@ class CommandParser {
         if (parsed != null && parsed <= 100) {
           value = parsed / 100;
         }
+      }
+      if (value == null &&
+          asksAboutState &&
+          !hasAny(['brighter', 'darker', 'dim', 'increase', 'decrease'])) {
+        return ParsedCommand(kind: IntentKind.brightness, raw: text, mode: 'status');
       }
       if (value == null) {
         if (hasAny(['brighter', 'increase', 'up'])) {
@@ -242,6 +265,11 @@ class CommandParser {
       if (match != null) {
         final parsed = int.tryParse(match.group(1) ?? '');
         if (parsed != null && parsed <= 100) value = parsed / 100;
+      }
+      if (value == null &&
+          asksAboutState &&
+          !hasAny(['louder', 'quieter', 'mute', 'unmute', 'increase', 'decrease', 'max'])) {
+        return ParsedCommand(kind: IntentKind.volume, raw: text, mode: 'status');
       }
       if (value == null) {
         if (lower.contains('mute') && !lower.contains('unmute')) {

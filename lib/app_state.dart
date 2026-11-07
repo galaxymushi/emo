@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models.dart';
+import 'services/cloud_brain.dart';
 import 'services/command_engine.dart';
 import 'services/device_bridge.dart';
 import 'services/voice_service.dart';
@@ -29,6 +31,8 @@ class AppState extends ChangeNotifier {
 
   final DeviceBridge bridge;
   final VoiceService voice = VoiceService();
+  final CloudBrain cloud = CloudBrain();
+  static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   SharedPreferences? _prefs;
 
@@ -39,6 +43,11 @@ class AppState extends ChangeNotifier {
   bool voiceReplies = true;
   bool keepHistory = true;
   double speechRate = 0.5;
+  bool cloudEnabled = false;
+  String cloudProviderId = CloudProvider.gemini.id;
+
+  bool get cloudReady => cloudEnabled && cloud.configured;
+  String get cloudProviderName => CloudProvider.byId(cloudProviderId).name;
 
   List<ActivityEvent> activity = [];
   List<Routine> routines = [];
@@ -81,6 +90,7 @@ class AppState extends ChangeNotifier {
     speechRate = _prefs?.getDouble('emo.speechRate') ?? 0.5;
     _loadRoutines();
     _loadActivity();
+    await _loadCloud();
     messages = [
       ChatMessage(
         id: 'welcome',
@@ -113,6 +123,24 @@ class AppState extends ChangeNotifier {
     await consumeRoutineEvents();
     booting = false;
     notifyListeners();
+  }
+
+  Future<void> _loadCloud() async {
+    final providerId =
+        _prefs?.getString('emo.cloud.provider') ?? CloudProvider.gemini.id;
+    final provider = CloudProvider.byId(providerId);
+    cloudProviderId = provider.id;
+    cloudEnabled = _prefs?.getBool('emo.cloud.enabled') ?? false;
+    final savedModel = _prefs?.getString('emo.cloud.model');
+    cloud.model =
+        savedModel == null || savedModel.trim().isEmpty ? provider.model : savedModel;
+    final savedEndpoint = _prefs?.getString('emo.cloud.endpoint') ?? '';
+    cloud.endpoint = provider.isCustom ? savedEndpoint : provider.endpoint;
+    try {
+      cloud.apiKey = await _secure.read(key: 'emo.cloud.key') ?? '';
+    } catch (_) {
+      cloud.apiKey = '';
+    }
   }
 
   void _loadRoutines() {
@@ -171,6 +199,7 @@ class AppState extends ChangeNotifier {
   Future<void> submitCommand(String raw, {bool speak = true}) async {
     final text = raw.trim();
     if (text.isEmpty || busy) return;
+    final history = _cloudHistory();
     busy = true;
     messages.add(
       ChatMessage(
@@ -191,8 +220,53 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await Future.delayed(const Duration(milliseconds: 320));
 
-    final parsed = CommandParser.parse(text, device, routines);
-    final outcome = await _execute(parsed, reply);
+    var parsed = CommandParser.parse(text, device, routines);
+    String? chatReply;
+    String? cloudError;
+
+    if (parsed.kind == IntentKind.unknown && cloudEnabled) {
+      if (!cloud.configured) {
+        cloudError = 'Cloud AI is on but has no API key. Add one in Settings.';
+      } else {
+        final step = _addStep(reply, 'Asking Emo Cloud');
+        final result = await cloud.interpret(
+          text: text,
+          device: device,
+          routines: routines,
+          history: history,
+        );
+        if (result.command != null) {
+          parsed = result.command!;
+          step.status = ExecStatus.done;
+          step.detail = 'Understood as ${result.actionName}';
+        } else if (result.chat != null) {
+          chatReply = result.chat;
+          step.status = ExecStatus.done;
+          step.detail = 'Answered';
+        } else {
+          cloudError = result.error ?? 'Cloud AI did not answer.';
+          step.status = ExecStatus.failed;
+          step.detail = cloudError;
+        }
+        notifyListeners();
+      }
+    }
+
+    final outcome = chatReply != null
+        ? _Outcome(
+            reply: chatReply,
+            title: 'Answered by Emo Cloud',
+            icon: 'cloud',
+            status: ActivityStatus.info,
+          )
+        : cloudError != null
+            ? _Outcome(
+                reply: '$cloudError Your offline commands still work.',
+                title: 'Cloud AI unavailable',
+                icon: 'cloud',
+                status: ActivityStatus.failed,
+              )
+            : await _execute(parsed, reply);
     reply.text = outcome.reply;
     reply.working = false;
     reply.permissionNeed = outcome.needs;
@@ -208,6 +282,20 @@ class AppState extends ChangeNotifier {
     if (speak) {
       await voice.speak(outcome.reply);
     }
+  }
+
+  List<Map<String, String>> _cloudHistory() {
+    final recent = messages
+        .where((message) => !message.working && message.text.trim().isNotEmpty)
+        .toList();
+    final start = recent.length > 8 ? recent.length - 8 : 0;
+    return [
+      for (final message in recent.sublist(start))
+        {
+          'role': message.fromUser ? 'user' : 'assistant',
+          'content': message.text,
+        },
+    ];
   }
 
   Future<BridgeResult> quickAction(String kind) async {
@@ -354,6 +442,15 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _torch(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      return _Outcome(
+        reply: 'The torch is ${device.torchOn ? 'on' : 'off'}.',
+        title: 'Torch status',
+        icon: 'torch',
+        status: ActivityStatus.info,
+      );
+    }
     final on = p.on ?? !device.torchOn;
     final label = on ? 'Turning the torch on' : 'Turning the torch off';
     var result = await _attempt(holder, label, () => bridge.setTorch(on));
@@ -385,6 +482,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _wifi(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      final state = !device.wifiEnabled
+          ? 'off'
+          : (device.wifiConnected ? 'on and connected' : 'on but not connected');
+      return _Outcome(
+        reply: 'Wi-Fi is $state.',
+        title: 'Wi-Fi status',
+        icon: 'wifi',
+        status: ActivityStatus.info,
+      );
+    }
     final on = p.on ?? !device.wifiEnabled;
     final result = await _attempt(
       holder,
@@ -420,6 +529,17 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _bluetooth(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      return _Outcome(
+        reply: device.bluetoothSupported
+            ? 'Bluetooth is ${device.bluetoothOn ? 'on' : 'off'}.'
+            : 'This phone does not report Bluetooth support.',
+        title: 'Bluetooth status',
+        icon: 'bluetooth',
+        status: ActivityStatus.info,
+      );
+    }
     final on = p.on ?? !device.bluetoothOn;
     final label = on ? 'Switching Bluetooth on' : 'Switching Bluetooth off';
     var result = await _attempt(holder, label, () => bridge.setBluetooth(on));
@@ -462,6 +582,22 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _dnd(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      final state = !device.dndAccess
+          ? 'Emo needs Do Not Disturb access to read it'
+          : (device.dndOn
+              ? (device.dndPriorityOnly
+                  ? 'on, letting priority alerts through'
+                  : 'on')
+              : 'off');
+      return _Outcome(
+        reply: 'Do Not Disturb is $state.',
+        title: 'Do Not Disturb status',
+        icon: 'moon',
+        status: ActivityStatus.info,
+      );
+    }
     final mode = p.mode ?? 'none';
     if (!device.dndAccess) {
       final step = _addStep(holder, 'Checking Do Not Disturb access');
@@ -510,6 +646,15 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _brightness(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      return _Outcome(
+        reply: 'Screen brightness is at ${(device.brightness * 100).round()}%.',
+        title: 'Brightness checked',
+        icon: 'brightness',
+        status: ActivityStatus.info,
+      );
+    }
     final value = clamp01(p.value ?? 0.5);
     final result = await _attempt(
       holder,
@@ -538,6 +683,16 @@ class AppState extends ChangeNotifier {
   }
 
   Future<_Outcome> _volume(ParsedCommand p, ChatMessage holder) async {
+    if (p.mode == 'status') {
+      await refreshDevice();
+      return _Outcome(
+        reply:
+            'Media volume is at ${(device.volumeMusic * 100).round()}%; the ringer is at ${(device.volumeRing * 100).round()}%.',
+        title: 'Volume checked',
+        icon: 'volume',
+        status: ActivityStatus.info,
+      );
+    }
     final stream = p.mode ?? 'music';
     final value = clamp01(p.value ?? 0.5);
     final result = await _attempt(
@@ -1159,6 +1314,59 @@ class AppState extends ChangeNotifier {
     final fallback = voice.preferredVoice;
     if (fallback != null) await voice.applyVoice(fallback);
     notifyListeners();
+  }
+
+  Future<void> setCloudEnabled(bool value) async {
+    cloudEnabled = value;
+    await _prefs?.setBool('emo.cloud.enabled', value);
+    notifyListeners();
+  }
+
+  Future<void> saveCloudConfig({
+    required String providerId,
+    required String apiKey,
+    required String model,
+    required String endpoint,
+  }) async {
+    final provider = CloudProvider.byId(providerId);
+    cloudProviderId = provider.id;
+    cloud.apiKey = apiKey.trim();
+    cloud.model =
+        model.trim().isEmpty ? provider.model : model.trim();
+    cloud.endpoint = provider.isCustom ? endpoint.trim() : provider.endpoint;
+    await _prefs?.setString('emo.cloud.provider', provider.id);
+    await _prefs?.setString('emo.cloud.model', cloud.model);
+    await _prefs?.setString('emo.cloud.endpoint', cloud.endpoint);
+    try {
+      if (cloud.apiKey.isEmpty) {
+        await _secure.delete(key: 'emo.cloud.key');
+      } else {
+        await _secure.write(key: 'emo.cloud.key', value: cloud.apiKey);
+      }
+    } catch (_) {}
+    if (cloud.apiKey.isEmpty) {
+      cloudEnabled = false;
+      await _prefs?.setBool('emo.cloud.enabled', false);
+    }
+    notifyListeners();
+  }
+
+  Future<String?> testCloudConfig({
+    required String providerId,
+    required String apiKey,
+    required String model,
+    required String endpoint,
+  }) async {
+    final provider = CloudProvider.byId(providerId);
+    final probe = CloudBrain();
+    probe.apiKey = apiKey.trim();
+    probe.model = model.trim().isEmpty ? provider.model : model.trim();
+    probe.endpoint = provider.isCustom ? endpoint.trim() : provider.endpoint;
+    try {
+      return await probe.testConnection();
+    } finally {
+      probe.close();
+    }
   }
 
   Future<void> setKeepHistory(bool value) async {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../models.dart';
+import '../services/cloud_brain.dart';
 import '../services/voice_service.dart';
 import '../theme.dart';
 import '../widgets/emo_icons.dart';
@@ -45,6 +46,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context,
       builder: (_) => _VoiceSheet(state: state),
     );
+  }
+
+  Future<void> _openCloudSheet() async {
+    await showEmoSheet<void>(
+      context,
+      builder: (_) => _CloudSheet(state: state),
+    );
+  }
+
+  Future<void> _toggleCloud(bool value) async {
+    await state.setCloudEnabled(value);
+    if (value && !state.cloud.configured && mounted) {
+      await _openCloudSheet();
+    }
   }
 
   Future<void> _openShizuku() async {
@@ -269,6 +284,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
             const SizedBox(height: 24),
+            const SectionTitle(title: 'Intelligence'),
+            _Group(
+              children: [
+                _SettingRow(
+                  icon: Icons.psychology_alt_outlined,
+                  title: 'Cloud brain',
+                  subtitle: state.cloudEnabled
+                      ? (state.cloud.configured
+                          ? 'Understands free-form requests and answers questions'
+                          : 'Needs an API key to start')
+                      : 'Off — Emo uses only its built-in commands',
+                  trailing: EmoSwitch(
+                    value: state.cloudEnabled,
+                    onChanged: _toggleCloud,
+                  ),
+                ),
+                _SettingRow(
+                  icon: Icons.cloud_outlined,
+                  title: 'Cloud setup',
+                  subtitle: state.cloud.configured
+                      ? '${state.cloudProviderName} · ${state.cloud.model}'
+                      : 'Add an API key to unlock free-form understanding',
+                  trailing: StatusChip(
+                    label: state.cloud.configured ? 'Ready' : 'Set up',
+                    color: state.cloud.configured
+                        ? EmoColors.blue
+                        : EmoColors.warning,
+                    compact: true,
+                  ),
+                  onTap: _openCloudSheet,
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
             const SectionTitle(title: 'Permissions'),
             _Group(
               children: [
@@ -355,7 +404,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
+                      state.cloudReady
+                          ? 'Offline commands never leave your phone. With Cloud brain on, only requests Emo cannot handle offline, the last few chat messages and basic device state are sent to your chosen provider.'
+                          : 'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontSize: 11.5,
                             height: 1.5,
@@ -376,7 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Emo 1.0.1 · built for Android',
+                    'Emo 1.1.0 · built for Android',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: EmoColors.faint,
                           fontSize: 11,
@@ -742,6 +793,372 @@ class _PermissionRow extends StatelessWidget {
               ),
             ),
       onTap: granted ? null : () => showPermissionSheet(context, state, need),
+    );
+  }
+}
+
+class _CloudSheet extends StatefulWidget {
+  const _CloudSheet({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_CloudSheet> createState() => _CloudSheetState();
+}
+
+class _CloudSheetState extends State<_CloudSheet> {
+  late String _providerId;
+  late final TextEditingController _key;
+  late final TextEditingController _model;
+  late final TextEditingController _endpoint;
+
+  bool _obscure = true;
+  bool _testing = false;
+  bool _saving = false;
+  String? _status;
+  bool _statusOk = false;
+
+  AppState get state => widget.state;
+  CloudProvider get _provider => CloudProvider.byId(_providerId);
+
+  @override
+  void initState() {
+    super.initState();
+    _providerId = state.cloudProviderId;
+    _key = TextEditingController(text: state.cloud.apiKey);
+    _model = TextEditingController(text: state.cloud.model);
+    _endpoint = TextEditingController(
+      text: _provider.isCustom ? state.cloud.endpoint : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _key.dispose();
+    _model.dispose();
+    _endpoint.dispose();
+    super.dispose();
+  }
+
+  void _selectProvider(CloudProvider provider) {
+    setState(() {
+      _providerId = provider.id;
+      _model.text = provider.model;
+      if (!provider.isCustom) _endpoint.clear();
+      _status = null;
+    });
+  }
+
+  Future<void> _test() async {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _testing = true;
+      _status = null;
+    });
+    final error = await state.testCloudConfig(
+      providerId: _providerId,
+      apiKey: _key.text,
+      model: _model.text,
+      endpoint: _endpoint.text,
+    );
+    if (!mounted) return;
+    setState(() {
+      _testing = false;
+      _statusOk = error == null;
+      _status = error ?? 'Connection works. Emo Cloud is ready.';
+    });
+  }
+
+  Future<void> _save() async {
+    if (_provider.isCustom) {
+      final endpoint = _endpoint.text.trim();
+      if (!endpoint.startsWith('https://') ||
+          !endpoint.contains('/chat/completions')) {
+        setState(() {
+          _statusOk = false;
+          _status = 'Enter an https:// chat completions endpoint.';
+        });
+        return;
+      }
+    }
+    setState(() => _saving = true);
+    await state.saveCloudConfig(
+      providerId: _providerId,
+      apiKey: _key.text,
+      model: _model.text,
+      endpoint: _endpoint.text,
+    );
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = _provider;
+    return SheetShell(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Cloud brain', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Emo sends only requests it cannot handle offline, the last few chat messages for context, and basic device state. Contacts, messages and notifications stay on this phone.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final option in CloudProvider.all)
+                _ProviderChip(
+                  label: option.name,
+                  selected: option.id == _providerId,
+                  onTap: () => _selectProvider(option),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _CloudField(
+            label: 'API key',
+            controller: _key,
+            hint: 'Paste your API key',
+            obscure: _obscure,
+            suffix: IconButton(
+              onPressed: () => setState(() => _obscure = !_obscure),
+              icon: Icon(
+                _obscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+                size: 19,
+                color: EmoColors.muted,
+              ),
+            ),
+          ),
+          _CloudField(
+            label: 'Model',
+            controller: _model,
+            hint: provider.model.isEmpty ? 'model name' : provider.model,
+          ),
+          if (provider.isCustom)
+            _CloudField(
+              label: 'Endpoint',
+              controller: _endpoint,
+              hint: 'https://…/chat/completions',
+              keyboardType: TextInputType.url,
+            ),
+          if (provider.keyUrl.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: TextButton.icon(
+                onPressed: () => state.bridge.openUrl(provider.keyUrl),
+                icon: const Icon(Icons.open_in_new_rounded, size: 15),
+                label: Text('Get a ${provider.name} API key'),
+                style: TextButton.styleFrom(
+                  foregroundColor: EmoColors.blue,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  textStyle: const TextStyle(
+                    fontFamily: 'Manrope',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          if (_status != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: (_statusOk ? EmoColors.success : EmoColors.danger)
+                    .withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: (_statusOk ? EmoColors.success : EmoColors.danger)
+                      .withValues(alpha: 0.18),
+                ),
+              ),
+              child: Text(
+                _status!,
+                style: TextStyle(
+                  fontFamily: 'Manrope',
+                  fontSize: 11.5,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                  color: _statusOk ? EmoColors.success : EmoColors.danger,
+                ),
+              ),
+            ),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: _testing || _saving ? null : _test,
+                  style: TextButton.styleFrom(
+                    foregroundColor: EmoColors.blue,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: _testing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text(
+                          'Test connection',
+                          style: TextStyle(
+                            fontFamily: 'Manrope',
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: PrimaryButton(
+                  label: _saving ? 'Saving…' : 'Save',
+                  icon: Icons.check_rounded,
+                  height: 48,
+                  loading: _saving,
+                  onTap: _saving ? null : _save,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Needs internet for cloud answers. The key is stored in this phone\u2019s Android keystore.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 10.5,
+                  height: 1.45,
+                  color: EmoColors.faint,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProviderChip extends StatelessWidget {
+  const _ProviderChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      onTap: onTap,
+      scale: 0.96,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected
+              ? EmoColors.blue.withValues(alpha: 0.10)
+              : Colors.white.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(100),
+          border: Border.all(
+            color: selected
+                ? EmoColors.blue.withValues(alpha: 0.34)
+                : Colors.white.withValues(alpha: 0.9),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Manrope',
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: selected ? EmoColors.blueInk : EmoColors.muted,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CloudField extends StatelessWidget {
+  const _CloudField({
+    required this.label,
+    required this.controller,
+    required this.hint,
+    this.obscure = false,
+    this.suffix,
+    this.keyboardType,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String hint;
+  final bool obscure;
+  final Widget? suffix;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: emoLabel(size: 9)),
+          const SizedBox(height: 5),
+          TextField(
+            controller: controller,
+            obscureText: obscure,
+            keyboardType: keyboardType,
+            autocorrect: false,
+            enableSuggestions: false,
+            style: const TextStyle(
+              fontFamily: 'Manrope',
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: EmoColors.ink,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: hint,
+              hintStyle: const TextStyle(
+                fontFamily: 'Manrope',
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: EmoColors.faint,
+              ),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.66),
+              suffixIcon: suffix,
+              suffixIconConstraints: const BoxConstraints(
+                minWidth: 38,
+                minHeight: 38,
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(13),
+                borderSide: BorderSide(
+                  color: Colors.white.withValues(alpha: 0.95),
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(13),
+                borderSide: BorderSide(
+                  color: EmoColors.blue.withValues(alpha: 0.5),
+                  width: 1.2,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

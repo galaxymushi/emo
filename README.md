@@ -1,6 +1,6 @@
 # Emo
 
-**An on-device Android assistant that actually does things.** Talk or type — Emo controls your phone's settings, opens apps, starts calls and messages, and runs saved routines. Everything is parsed and executed locally; no cloud account, no fabricated AI answers.
+**An on-device Android assistant that actually does things.** Talk or type — Emo controls your phone's settings, opens apps, starts calls and messages, and runs saved routines. Commands are parsed and executed on the phone; an optional cloud brain adds free-form understanding with your own provider key. Emo never fabricates a result.
 
 Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 
@@ -22,6 +22,7 @@ Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 
 - **Voice & text commands** — built-in Android speech recognition (with live partial results) and TTS replies.
 - **Pro voice picker** — Emo auto-selects the best natural US English voice your phone's TTS engine exposes, with numbered voices, preview playback and a saved choice. Natural voices stream over the internet; standard voices work offline.
+- **Optional cloud brain** — when the offline parser doesn't recognize a request, Emo can ask a cloud model to translate it into one of its real device actions, or answer a general question. Gemini, OpenAI, OpenRouter, Groq and any OpenAI-compatible endpoint are supported with your own API key. The model only returns a structured intent; the phone still performs and reports the action.
 - **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
 - **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
 - **Routines** — daily schedules via `AlarmManager` (DND, volume, torch, brightness), persisted across restarts and runnable even when the app is closed.
@@ -40,7 +41,11 @@ Android blocks some actions for third-party apps. Emo opens the right system sur
 | Lock screen, screenshots | Available only with Accessibility service enabled |
 | App launch | Standard intent; no root or Shizuku required |
 
-There is **no language model** in the loop — commands are matched by a deterministic on-device parser. If Emo doesn't understand a command, it says so and suggests what it can do.
+## Offline first, cloud optional
+
+Known commands never leave the phone. A deterministic on-device parser matches 25 command intents instantly, asks about state instead of toggling it ("is Wi-Fi on?"), and executes through real Android APIs.
+
+When **Cloud brain** is enabled and the parser doesn't recognize a message, Emo sends that message, the last few chat turns and basic device state (battery, brightness, volume, Wi-Fi/Bluetooth/DND, routine names) to the provider you chose. The model must reply with a JSON action from Emo's fixed list; Emo validates it, executes it locally, and reports the real result. Questions that aren't phone actions get a short conversational answer. With Cloud brain off — the default — nothing is uploaded. The API key is kept in the Android keystore.
 
 ## Permissions
 
@@ -65,7 +70,8 @@ lib/
   app_state.dart            ChangeNotifier state, persistence, routines/activity
   models.dart               DeviceState, ChatMessage, ActivityEvent, routines
   services/
-    command_engine.dart     deterministic intent parser + executor
+    command_engine.dart     deterministic intent parser
+    cloud_brain.dart        optional OpenAI-compatible NLU + chat client
     device_bridge.dart      MethodChannel bridge to Kotlin
     voice_service.dart      speech_to_text + flutter_tts
   screens/                  home, assistant, automations, control center,
@@ -93,7 +99,7 @@ Install on a device with developer options enabled:
 adb install -r build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Requires Flutter 3.35+ and JDK 17. No API keys or backend services.
+Requires Flutter 3.35+ and JDK 17. No backend services. The cloud brain is optional and uses your own provider API key, added in **Settings → Intelligence**.
 
 ## Install from release
 
@@ -101,7 +107,7 @@ Download the latest `app-release.apk` from [Releases](https://github.com/galaxym
 
 ## Verified
 
-Tested on an Android 14 emulator: cold launch without permission prompts, all six screens, command parsing and media-volume execution (`set volume to 30`), routine scheduling and activity logging. Voice selection was verified end to end — the chosen natural voice (`en-us-x-iom-network`) is what Google TTS synthesizes replies with, and it survives an app restart. Hardware-dependent surfaces (torch, calls, Wi-Fi panel) use standard Android APIs and intents but were not exercised on the emulator.
+Tested on an Android 14 emulator: cold launch without permission prompts, all six screens, command parsing and media-volume execution (`set volume to 30`), routine scheduling and activity logging. Voice selection was verified end to end — the chosen natural voice (`en-us-x-iom-network`) is what Google TTS synthesizes replies with, and it survives an app restart. The cloud path is covered by unit tests for request construction, fenced-JSON parsing, intent mapping, missing-routine clarification and auth errors; the on-device flow without a key was verified to fail honestly. A live provider call needs your own API key. Hardware-dependent surfaces (torch, calls, Wi-Fi panel) use standard Android APIs and intents but were not exercised on the emulator.
 
 ---
 
