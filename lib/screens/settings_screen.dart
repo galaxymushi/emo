@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../models.dart';
+import '../services/voice_service.dart';
 import '../theme.dart';
 import '../widgets/emo_icons.dart';
 import '../widgets/feedback.dart';
@@ -36,6 +37,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   };
 
   void _openAccess(String need) => showPermissionSheet(context, state, need);
+
+  Future<void> _openVoiceSheet() async {
+    await state.ensureVoices();
+    if (!mounted) return;
+    await showEmoSheet<void>(
+      context,
+      builder: (_) => _VoiceSheet(state: state),
+    );
+  }
 
   Future<void> _openShizuku() async {
     final result = state.device.shizukuInstalled
@@ -234,9 +244,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 _SettingRow(
+                  icon: Icons.graphic_eq_rounded,
+                  title: 'Voice',
+                  subtitle: state.voice.currentVoice == null
+                      ? "Using your phone's default voice"
+                      : '${state.voiceLabel} · ${state.voice.currentVoice!.isNatural ? 'internet' : 'offline'}',
+                  trailing: const StatusChip(
+                    label: 'Change',
+                    color: EmoColors.blue,
+                    compact: true,
+                  ),
+                  onTap: _openVoiceSheet,
+                ),
+                _SettingRow(
                   icon: Icons.translate_rounded,
                   title: 'Voice language',
-                  subtitle: 'Emo listens and replies in US English',
+                  subtitle: 'Commands are recognized in US English',
                   trailing: const StatusChip(
                     label: 'English (US)',
                     color: EmoColors.blue,
@@ -353,7 +376,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Emo 1.0.0 · built for Android',
+                    'Emo 1.0.1 · built for Android',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: EmoColors.faint,
                           fontSize: 11,
@@ -719,6 +742,170 @@ class _PermissionRow extends StatelessWidget {
               ),
             ),
       onTap: granted ? null : () => showPermissionSheet(context, state, need),
+    );
+  }
+}
+
+class _VoiceSheet extends StatelessWidget {
+  const _VoiceSheet({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final english = state.voice.voices.where((v) => v.isEnglish).toList();
+    final list = english.isEmpty ? state.voice.voices : english;
+    final visible = list.length > 12 ? list.sublist(0, 12) : list;
+    final current = state.voice.currentVoice;
+
+    return SheetShell(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Choose a voice', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text(
+            'Natural voices sound more human but need an internet connection. Standard voices work offline.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          if (visible.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: EmoColors.blue.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(
+                "This phone's text-to-speech engine didn't report any voices. Install voice data in Android Settings → System → Languages & input → Text-to-speech output.",
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      height: 1.45,
+                    ),
+              ),
+            )
+          else
+            for (var index = 0; index < visible.length; index++)
+              _VoiceRow(
+                voice: visible[index],
+                index: index,
+                selected: current != null &&
+                    current.name == visible[index].name &&
+                    current.locale == visible[index].locale,
+                onPreview: () => state.voice.previewVoice(visible[index]),
+                onSelect: () async {
+                  await state.setEmoVoice(visible[index]);
+                  if (context.mounted) Navigator.of(context).pop();
+                },
+              ),
+          const SizedBox(height: 6),
+          Text(
+            'Voices come from your phone. Install more in Android Settings → Text-to-speech.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 10.5,
+                  height: 1.45,
+                  color: EmoColors.faint,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VoiceRow extends StatelessWidget {
+  const _VoiceRow({
+    required this.voice,
+    required this.index,
+    required this.selected,
+    required this.onSelect,
+    required this.onPreview,
+  });
+
+  final EmoVoice voice;
+  final int index;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Pressable(
+        onTap: onSelect,
+        scale: 0.99,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? EmoColors.blue.withValues(alpha: 0.09)
+                : Colors.white.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected
+                  ? EmoColors.blue.withValues(alpha: 0.30)
+                  : Colors.white.withValues(alpha: 0.9),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconBadge(
+                icon: selected
+                    ? Icons.check_rounded
+                    : Icons.graphic_eq_rounded,
+                active: selected,
+                size: 34,
+                radius: 11,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${voice.languageName} · Voice ${index + 1}'
+                      '${voice.gender != null ? ' · ${voice.gender}' : ''}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: selected ? EmoColors.blueInk : EmoColors.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      voice.isNatural
+                          ? 'Natural · needs internet'
+                          : 'Standard · works offline',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Manrope',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: EmoColors.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onPreview,
+                icon: const Icon(Icons.play_circle_outline_rounded),
+                color: EmoColors.blue,
+                iconSize: 26,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                tooltip: 'Preview',
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

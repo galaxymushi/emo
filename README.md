@@ -14,9 +14,14 @@ Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 | :---: | :---: | :---: |
 | ![Control Center](screenshots/control-center.png) | ![Activity](screenshots/activity.png) | ![Settings](screenshots/settings.png) |
 
+| Voice picker |
+| :---: |
+| ![Voice picker](screenshots/voice.png) |
+
 ## What it can do
 
 - **Voice & text commands** — built-in Android speech recognition (with live partial results) and TTS replies.
+- **Pro voice picker** — Emo auto-selects the best natural US English voice your phone's TTS engine exposes, with numbered voices, preview playback and a saved choice. Natural voices stream over the internet; standard voices work offline.
 - **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
 - **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
 - **Routines** — daily schedules via `AlarmManager` (DND, volume, torch, brightness), persisted across restarts and runnable even when the app is closed.
@@ -96,7 +101,7 @@ Download the latest `app-release.apk` from [Releases](https://github.com/galaxym
 
 ## Verified
 
-Tested on an Android 14 emulator: cold launch without permission prompts, all six screens, command parsing and media-volume execution (`set volume to 30`), routine scheduling and activity logging. Hardware-dependent surfaces (torch, calls, Wi-Fi panel) use standard Android APIs and intents but were not exercised on the emulator.
+Tested on an Android 14 emulator: cold launch without permission prompts, all six screens, command parsing and media-volume execution (`set volume to 30`), routine scheduling and activity logging. Voice selection was verified end to end — the chosen natural voice (`en-us-x-iom-network`) is what Google TTS synthesizes replies with, and it survives an app restart. Hardware-dependent surfaces (torch, calls, Wi-Fi panel) use standard Android APIs and intents but were not exercised on the emulator.
 
 ---
 

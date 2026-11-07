@@ -93,6 +93,21 @@ class AppState extends ChangeNotifier {
     await voice.init();
     voice.ttsEnabled = voiceReplies;
     await voice.setRate(speechRate);
+    await voice.loadVoices();
+    EmoVoice? chosen;
+    final savedName = _prefs?.getString('emo.voice.name');
+    final savedLocale = _prefs?.getString('emo.voice.locale');
+    if (savedName != null) {
+      for (final voiceOption in voice.voices) {
+        if (voiceOption.name == savedName &&
+            (savedLocale == null || voiceOption.locale == savedLocale)) {
+          chosen = voiceOption;
+          break;
+        }
+      }
+    }
+    chosen ??= voice.preferredVoice;
+    if (chosen != null) await voice.applyVoice(chosen);
     await refreshDevice();
     await _syncRoutines();
     await consumeRoutineEvents();
@@ -1119,6 +1134,30 @@ class AppState extends ChangeNotifier {
     speechRate = value;
     await voice.setRate(value);
     await _prefs?.setDouble('emo.speechRate', value);
+    notifyListeners();
+  }
+
+  String get voiceLabel => voice.currentVoice?.label ?? 'Phone default';
+
+  Future<void> ensureVoices() async {
+    if (voice.voices.isEmpty) {
+      await voice.loadVoices();
+      notifyListeners();
+    }
+  }
+
+  Future<void> setEmoVoice(EmoVoice value) async {
+    await voice.applyVoice(value);
+    await _prefs?.setString('emo.voice.name', value.name);
+    await _prefs?.setString('emo.voice.locale', value.locale);
+    notifyListeners();
+  }
+
+  Future<void> resetEmoVoice() async {
+    await _prefs?.remove('emo.voice.name');
+    await _prefs?.remove('emo.voice.locale');
+    final fallback = voice.preferredVoice;
+    if (fallback != null) await voice.applyVoice(fallback);
     notifyListeners();
   }
 
