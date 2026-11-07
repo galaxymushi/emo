@@ -1,0 +1,103 @@
+# Emo
+
+**An on-device Android assistant that actually does things.** Talk or type — Emo controls your phone's settings, opens apps, starts calls and messages, and runs saved routines. Everything is parsed and executed locally; no cloud account, no fabricated AI answers.
+
+Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
+
+## Screens
+
+| Home | Assistant | Automations |
+| :---: | :---: | :---: |
+| ![Home](screenshots/home.png) | ![Assistant](screenshots/assistant.png) | ![Automations](screenshots/automations.png) |
+
+| Control Center | Activity | Settings |
+| :---: | :---: | :---: |
+| ![Control Center](screenshots/control-center.png) | ![Activity](screenshots/activity.png) | ![Settings](screenshots/settings.png) |
+
+## What it can do
+
+- **Voice & text commands** — built-in Android speech recognition (with live partial results) and TTS replies.
+- **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
+- **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
+- **Routines** — daily schedules via `AlarmManager` (DND, volume, torch, brightness), persisted across restarts and runnable even when the app is closed.
+- **Live feedback** — every command renders its execution steps; success, failure and permission needs are shown honestly. An activity timeline records the last 90 actions.
+- **Control Center** — glass tile grid for connectivity, display, sound and focus controls, plus sliders for brightness and volume.
+
+## Honest Android limits
+
+Android blocks some actions for third-party apps. Emo opens the right system surface instead of pretending it succeeded:
+
+| Action | Behavior |
+| --- | --- |
+| Torch, volume, brightness, DND | Directly controlled (brightness/DND need access grants) |
+| Wi-Fi / Bluetooth toggles | Opens the system panel on Android 10+ — Android forbids silent toggles |
+| Calls & messages | Opens the dialer / composer pre-filled; you confirm the send |
+| Lock screen, screenshots | Available only with Accessibility service enabled |
+| App launch | Standard intent; no root or Shizuku required |
+
+There is **no language model** in the loop — commands are matched by a deterministic on-device parser. If Emo doesn't understand a command, it says so and suggests what it can do.
+
+## Permissions
+
+| Permission | Why |
+| --- | --- |
+| Microphone | Voice commands (only requested when you tap the mic) |
+| Camera | Torch control |
+| Contacts | "Call Alex" / "Message Alex" |
+| Bluetooth connect | Read adapter state on Android 12+ |
+| Notification access | Read pending notification count |
+| DND access | Toggle Do Not Disturb |
+| Modify system settings | Set screen brightness |
+| Accessibility | Lock screen and global actions (optional) |
+
+Emo asks at the moment a capability is first used, and Settings shows the current grant state for each one.
+
+## Architecture
+
+```
+lib/
+  main.dart                 app shell + ambient glass background
+  app_state.dart            ChangeNotifier state, persistence, routines/activity
+  models.dart               DeviceState, ChatMessage, ActivityEvent, routines
+  services/
+    command_engine.dart     deterministic intent parser + executor
+    device_bridge.dart      MethodChannel bridge to Kotlin
+    voice_service.dart      speech_to_text + flutter_tts
+  screens/                  home, assistant, automations, control center,
+                            activity, settings, shell (floating nav)
+  widgets/                  glass surfaces, orb, icons, feedback sheets
+android/app/src/main/kotlin/.../MainActivity.kt
+                            device snapshot, torch, DND, brightness, volume,
+                            intents, contacts, alarms, accessibility service
+```
+
+State lives in a single `AppState` (`ChangeNotifier`); persistence uses `shared_preferences`. Routines are scheduled with `AlarmManager` and restored on boot.
+
+## Build
+
+```bash
+flutter pub get
+flutter build apk --release
+```
+
+APK output: `build/app/outputs/flutter-apk/app-release.apk`
+
+Install on a device with developer options enabled:
+
+```bash
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+Requires Flutter 3.35+ and JDK 17. No API keys or backend services.
+
+## Install from release
+
+Download the latest `app-release.apk` from [Releases](https://github.com/galaxymushi/emo/releases), allow installation from your file manager, then grant permissions from **Settings → Access** inside the app.
+
+## Verified
+
+Tested on an Android 14 emulator: cold launch without permission prompts, all six screens, command parsing and media-volume execution (`set volume to 30`), routine scheduling and activity logging. Hardware-dependent surfaces (torch, calls, Wi-Fi panel) use standard Android APIs and intents but were not exercised on the emulator.
+
+---
+
+Built by [galaxymushi](https://github.com/galaxymushi).

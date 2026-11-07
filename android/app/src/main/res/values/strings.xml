@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Emo</string>
+    <string name="emo_accessibility_summary">Lets Emo go back, go home, open notifications and swipe for you.</string>
+    <string name="emo_accessibility_description">Emo uses accessibility to perform navigation actions you ask for by voice or text — like going back, opening the home screen, showing notifications or scrolling. Emo never reads the content of your screen.</string>
+</resources>
