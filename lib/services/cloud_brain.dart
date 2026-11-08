@@ -188,6 +188,7 @@ class CloudBrain {
       'model': model.trim(),
       'messages': messages,
       'temperature': temperature,
+      'max_tokens': 300,
     });
     http.Response response;
     for (var attempt = 0;; attempt++) {
@@ -257,6 +258,13 @@ class CloudBrain {
         error: 'The AI provider is rate-limiting requests. Try again shortly.',
       );
     }
+    if (response.statusCode == 402) {
+      return (
+        text: null,
+        error:
+            'The provider says this account has no credits left. Top up the account or use a free model.',
+      );
+    }
     if (response.statusCode == 503) {
       return (
         text: null,
@@ -289,7 +297,10 @@ class CloudBrain {
         if (joined.isNotEmpty) return (text: joined, error: null);
       }
     } catch (_) {}
-    return (text: null, error: 'Cloud AI sent an empty answer.');
+    return (
+      text: null,
+      error: 'Cloud AI sent an empty answer. Try another model.',
+    );
   }
 
   String? _errorDetail(String body) {

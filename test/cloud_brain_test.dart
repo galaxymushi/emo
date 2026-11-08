@@ -83,6 +83,7 @@ void main() {
       expect(reply.command?.value, closeTo(0.35, 0.001));
       expect(sent?.headers['Authorization'], 'Bearer test-key');
       expect(sent?.body, contains('brightness 80%'));
+      expect(sent?.body, contains('"max_tokens":300'));
     });
 
     test('reads JSON wrapped in a code fence', () async {
@@ -176,6 +177,20 @@ void main() {
       );
 
       expect(reply.error, contains('busy'));
+    });
+
+    test('explains an out-of-credits account', () async {
+      final brain = brainWith(
+        MockClient((_) async => http.Response('{}', 402)),
+      );
+
+      final reply = await brain.interpret(
+        text: 'hi',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(reply.error, contains('credits'));
     });
 
     test('surfaces the provider reason for a bad key', () async {      final brain = brainWith(MockClient((_) async => http.Response(
