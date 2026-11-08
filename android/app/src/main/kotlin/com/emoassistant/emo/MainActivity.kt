@@ -44,6 +44,7 @@ class MainActivity : FlutterActivity() {
             }
         }
         RoutineScheduler.ensureChannel(this)
+        EmoAlerts.ensureChannels(this)
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -81,6 +82,22 @@ class MainActivity : FlutterActivity() {
             "requestPermission" -> requestPermission(
                 call.argument<String>("name") ?: "", result
             )
+            "notifyReply" -> result.success(
+                EmoAlerts.postReply(
+                    this,
+                    call.argument<String>("title") ?: "Emo",
+                    call.argument<String>("body") ?: ""
+                )
+            )
+            "notifyUpdate" -> result.success(
+                EmoAlerts.postUpdate(
+                    this,
+                    call.argument<String>("version") ?: "",
+                    call.argument<String>("url") ?: "",
+                    call.argument<String>("notes") ?: ""
+                )
+            )
+            "appVersion" -> result.success(appVersion())
             "syncRoutines" -> {
                 RoutineStore.save(this, call.argument<String>("json") ?: "[]")
                 result.success(mapOf("ok" to true))
@@ -181,6 +198,12 @@ class MainActivity : FlutterActivity() {
 
     private fun granted(permission: String): Boolean =
         checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun appVersion(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (e: Exception) {
+        ""
+    }
 
     private fun isPackageInstalled(pkg: String): Boolean = try {
         packageManager.getPackageInfo(pkg, 0)

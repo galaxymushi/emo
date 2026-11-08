@@ -26,6 +26,7 @@ Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 - **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
 - **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
 - **Routines** — daily schedules via `AlarmManager` (DND, volume, torch, brightness), persisted across restarts and runnable even when the app is closed.
+- **Reply and update alerts** — if an answer arrives while Emo is in the background, a notification shows it. Emo also checks GitHub every 6 hours for a newer release and notifies you; tapping the update alert opens the release APK download. Both alert types have switches in Settings, and Settings has a manual "Check" row.
 - **Live feedback** — every command renders its execution steps; success, failure and permission needs are shown honestly. An activity timeline records the last 90 actions.
 - **Control Center** — glass tile grid for connectivity, display, sound and focus controls, plus sliders for brightness and volume.
 
@@ -55,6 +56,7 @@ When **Cloud brain** is enabled and the parser doesn't recognize a message, Emo 
 | Camera | Torch control |
 | Contacts | "Call Alex" / "Message Alex" |
 | Bluetooth connect | Read adapter state on Android 12+ |
+| Notification permission | Reply alerts and update alerts |
 | Notification access | Read pending notification count |
 | DND access | Toggle Do Not Disturb |
 | Modify system settings | Set screen brightness |
@@ -72,6 +74,7 @@ lib/
   services/
     command_engine.dart     deterministic intent parser
     cloud_brain.dart        optional OpenAI-compatible NLU + chat client
+    update_service.dart     GitHub release check + version comparison
     device_bridge.dart      MethodChannel bridge to Kotlin
     voice_service.dart      speech_to_text + flutter_tts
   screens/                  home, assistant, automations, control center,

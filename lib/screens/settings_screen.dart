@@ -62,6 +62,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _toggleReplyAlerts(bool value) async {
+    if (value && !state.device.notificationPermission) {
+      final granted = await state.grantAccess('notifications');
+      if (!granted) {
+        if (!mounted) return;
+        emoSnack(
+          context,
+          'Allow notifications in Android settings first.',
+          icon: Icons.notifications_off_outlined,
+          color: EmoColors.warning,
+        );
+        return;
+      }
+    }
+    await state.setReplyNotifications(value);
+  }
+
+  Future<void> _toggleUpdateAlerts(bool value) async {
+    if (value && !state.device.notificationPermission) {
+      final granted = await state.grantAccess('notifications');
+      if (!granted) {
+        if (!mounted) return;
+        emoSnack(
+          context,
+          'Allow notifications in Android settings first.',
+          icon: Icons.notifications_off_outlined,
+          color: EmoColors.warning,
+        );
+        return;
+      }
+    }
+    await state.setUpdateNotifications(value);
+  }
+
   Future<void> _openShizuku() async {
     final result = state.device.shizukuInstalled
         ? await state.bridge.openApp('Shizuku')
@@ -284,6 +318,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
             const SizedBox(height: 24),
+            const SectionTitle(title: 'Notifications'),
+            _Group(
+              children: [
+                _SettingRow(
+                  icon: Icons.mark_chat_unread_outlined,
+                  title: 'Reply notifications',
+                  subtitle: state.replyNotifications
+                      ? 'Notify when an answer arrives while Emo is in the background'
+                      : 'Off — answers stay in the chat',
+                  trailing: EmoSwitch(
+                    value: state.replyNotifications,
+                    onChanged: _toggleReplyAlerts,
+                  ),
+                ),
+                _SettingRow(
+                  icon: Icons.system_update_alt_rounded,
+                  title: 'Update notifications',
+                  subtitle: state.updateNotifications
+                      ? 'Tell me when a newer Emo APK is released'
+                      : 'Off — no update alerts',
+                  trailing: EmoSwitch(
+                    value: state.updateNotifications,
+                    onChanged: _toggleUpdateAlerts,
+                  ),
+                ),
+                _SettingRow(
+                  icon: Icons.download_rounded,
+                  title: state.availableUpdate != null
+                      ? 'Emo ${state.availableUpdate!.version} is ready'
+                      : 'App updates',
+                  subtitle: state.checkingUpdate
+                      ? 'Checking for updates…'
+                      : state.updateError ??
+                          (state.availableUpdate != null
+                              ? 'Tap to download the latest APK'
+                              : 'You are on Emo ${state.appVersion.isEmpty ? '1.2.0' : state.appVersion}'),
+                  trailing: StatusChip(
+                    label: state.availableUpdate != null
+                        ? 'Get'
+                        : (state.checkingUpdate ? '…' : 'Check'),
+                    color: state.availableUpdate != null
+                        ? EmoColors.success
+                        : EmoColors.muted,
+                    compact: true,
+                  ),
+                  onTap: state.availableUpdate != null
+                      ? state.openUpdate
+                      : () => state.checkForUpdates(manual: true),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
             const SectionTitle(title: 'Intelligence'),
             _Group(
               children: [
@@ -427,7 +513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Emo 1.1.3 · built for Android',
+                    'Emo ${state.appVersion.isEmpty ? '1.2.0' : state.appVersion} · built for Android',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: EmoColors.faint,
                           fontSize: 11,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import 'models.dart';
 import 'services/cloud_brain.dart';
 import 'services/command_engine.dart';
 import 'services/device_bridge.dart';
+import 'services/update_service.dart';
 import 'services/voice_service.dart';
 
 class _Outcome {
@@ -32,6 +34,7 @@ class AppState extends ChangeNotifier {
   final DeviceBridge bridge;
   final VoiceService voice = VoiceService();
   final CloudBrain cloud = CloudBrain();
+  final UpdateService updateService = UpdateService();
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   SharedPreferences? _prefs;
@@ -45,6 +48,16 @@ class AppState extends ChangeNotifier {
   double speechRate = 0.5;
   bool cloudEnabled = false;
   String cloudProviderId = CloudProvider.gemini.id;
+
+  String appVersion = '';
+  bool replyNotifications = true;
+  bool updateNotifications = true;
+  UpdateInfo? availableUpdate;
+  bool checkingUpdate = false;
+  String? updateError;
+  bool inForeground = true;
+  DateTime? _lastUpdateCheck;
+  Timer? _updateTimer;
 
   bool get cloudReady => cloudEnabled && cloud.configured;
   String get cloudProviderName => CloudProvider.byId(cloudProviderId).name;
@@ -88,6 +101,9 @@ class AppState extends ChangeNotifier {
     voiceReplies = _prefs?.getBool('emo.voiceReplies') ?? true;
     keepHistory = _prefs?.getBool('emo.keepHistory') ?? true;
     speechRate = _prefs?.getDouble('emo.speechRate') ?? 0.5;
+    replyNotifications = _prefs?.getBool('emo.notify.replies') ?? true;
+    updateNotifications = _prefs?.getBool('emo.notify.updates') ?? true;
+    appVersion = await bridge.appVersion();
     _loadRoutines();
     _loadActivity();
     await _loadCloud();
@@ -123,6 +139,13 @@ class AppState extends ChangeNotifier {
     await consumeRoutineEvents();
     booting = false;
     notifyListeners();
+    _updateTimer = Timer.periodic(
+      const Duration(hours: 6),
+      (_) => unawaited(checkForUpdates()),
+    );
+    if (updateNotifications) {
+      unawaited(checkForUpdates());
+    }
   }
 
   Future<void> _loadCloud() async {
@@ -281,6 +304,9 @@ class AppState extends ChangeNotifier {
       status: outcome.status,
       icon: outcome.icon,
     );
+    if (!inForeground && replyNotifications && outcome.reply.trim().isNotEmpty) {
+      await bridge.notifyReply(outcome.reply.trim());
+    }
     if (speak) {
       await voice.speak(outcome.reply);
     }
@@ -1324,6 +1350,71 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setReplyNotifications(bool value) async {
+    if (value && !device.notificationPermission) {
+      final granted = await grantAccess('notifications');
+      if (!granted) return;
+    }
+    replyNotifications = value;
+    await _prefs?.setBool('emo.notify.replies', value);
+    notifyListeners();
+  }
+
+  Future<void> setUpdateNotifications(bool value) async {
+    if (value && !device.notificationPermission) {
+      final granted = await grantAccess('notifications');
+      if (!granted) return;
+    }
+    updateNotifications = value;
+    await _prefs?.setBool('emo.notify.updates', value);
+    notifyListeners();
+    if (value) unawaited(checkForUpdates());
+  }
+
+  Future<void> checkForUpdates({bool manual = false}) async {
+    if (checkingUpdate) return;
+    if (appVersion.isEmpty) appVersion = await bridge.appVersion();
+    if (appVersion.isEmpty) return;
+    checkingUpdate = true;
+    if (manual) updateError = null;
+    notifyListeners();
+    try {
+      final info = await updateService.check(appVersion);
+      availableUpdate = info;
+      _lastUpdateCheck = DateTime.now();
+      if (info != null &&
+          updateNotifications &&
+          _prefs?.getString('emo.update.seen') != info.version) {
+        final posted = await bridge.notifyUpdate(
+          version: info.version,
+          url: info.apkUrl,
+          notes: info.notes,
+        );
+        if (posted) await _prefs?.setString('emo.update.seen', info.version);
+      }
+    } catch (_) {
+      if (manual) updateError = 'Could not check for updates. Try again later.';
+    } finally {
+      checkingUpdate = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> openUpdate() async {
+    final url = availableUpdate?.apkUrl ??
+        'https://github.com/${UpdateService.repository}/releases/latest';
+    await bridge.openUrl(url);
+  }
+
+  void setForeground(bool value) {
+    inForeground = value;
+    if (!value) return;
+    final last = _lastUpdateCheck;
+    if (last == null || DateTime.now().difference(last) > const Duration(hours: 6)) {
+      unawaited(checkForUpdates());
+    }
+  }
+
   Future<void> saveCloudConfig({
     required String providerId,
     required String apiKey,
@@ -1504,6 +1595,14 @@ class AppState extends ChangeNotifier {
         icon: 'sparkle',
       ),
     ];
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    updateService.close();
+    cloud.close();
+    super.dispose();
   }
 }
 

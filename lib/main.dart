@@ -46,7 +46,9 @@ class _EmoAppState extends State<EmoApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    final foreground = state == AppLifecycleState.resumed;
+    _state.setForeground(foreground);
+    if (foreground) {
       _state.handleResume();
     }
   }
