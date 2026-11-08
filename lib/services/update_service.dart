@@ -57,13 +57,27 @@ class UpdateService {
       }
     }
     final releaseUrl = decoded['html_url'] as String? ?? '';
-    final notes = (decoded['body'] as String? ?? '').trim();
+    final notes = _plainNotes(decoded['body'] as String? ?? '');
     return UpdateInfo(
       version: version,
       apkUrl: apkUrl.isNotEmpty ? apkUrl : releaseUrl,
       releaseUrl: releaseUrl,
-      notes: notes.length > 500 ? notes.substring(0, 500) : notes,
+      notes: notes,
     );
+  }
+
+  static String _plainNotes(String raw) {
+    final text = raw
+        .replaceAll(RegExp(r'```[\s\S]*?```'), ' ')
+        .replaceAll(RegExp(r'^#{1,6}\s*', multiLine: true), '')
+        .replaceAllMapped(
+          RegExp(r'\[([^\]]+)\]\([^)]*\)'),
+          (match) => match[1] ?? '',
+        )
+        .replaceAll(RegExp(r'[*_`>]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return text.length > 300 ? '${text.substring(0, 300)}…' : text;
   }
 
   static int compareVersions(String a, String b) {

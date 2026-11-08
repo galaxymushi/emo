@@ -70,4 +70,27 @@ void main() {
     expect(UpdateService.compareVersions('1.1.3', '1.2.0'), lessThan(0));
     expect(UpdateService.compareVersions('v1.2.0', '1.1.9'), greaterThan(0));
   });
+
+  test('strips markdown so release notes read cleanly in a notification', () async {
+    final service = UpdateService(
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'tag_name': 'v1.2.1',
+            'html_url': 'https://github.com/galaxymushi/emo/releases/tag/v1.2.1',
+            'body': '## Fixes\n- **Update alerts** now shown\nSee [notes](https://x.y)',
+            'assets': const [],
+          }),
+          200,
+        ),
+      ),
+    );
+
+    final info = await service.check('1.2.0');
+
+    expect(info!.notes, contains('Fixes'));
+    expect(info.notes, isNot(contains('#')));
+    expect(info.notes, isNot(contains('**')));
+    expect(info.notes, contains('notes'));
+  });
 }

@@ -353,7 +353,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       : state.updateError ??
                           (state.availableUpdate != null
                               ? 'Tap to download the latest APK'
-                              : 'You are on Emo ${state.appVersion.isEmpty ? '1.2.0' : state.appVersion}'),
+                              : state.appVersion.isEmpty
+                                  ? 'Check the latest release'
+                                  : 'You are on Emo ${state.appVersion}'),
                   trailing: StatusChip(
                     label: state.availableUpdate != null
                         ? 'Get'
@@ -513,7 +515,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Emo ${state.appVersion.isEmpty ? '1.2.0' : state.appVersion} · built for Android',
+                    state.appVersion.isEmpty
+                        ? 'Emo · built for Android'
+                        : 'Emo ${state.appVersion} · built for Android',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: EmoColors.faint,
                           fontSize: 11,
