@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:emo/models.dart';
 import 'package:emo/services/cloud_brain.dart';
 import 'package:emo/services/command_engine.dart';
+import 'package:emo/services/memory_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -260,6 +261,73 @@ void main() {
       expect(parsed.kind, IntentKind.torch);
       expect(parsed.on, isTrue);
       expect(parsed.mode, isNull);
+    });
+  });
+
+  group('Persona and memory', () {
+    test('system prompt carries the boss name and remembered facts', () async {
+      String? body;
+      final brain = brainWith(MockClient((request) async {
+        body = request.body;
+        return http.Response(chatBody('{"action":"chat","reply":"Hello."}'), 200);
+      }));
+      final memory = MemoryStore();
+      await memory.add('Likes tea');
+
+      await brain.interpret(
+        text: 'hello',
+        device: const DeviceState(),
+        routines: const [],
+        owner: 'boss',
+        memory: memory,
+      );
+
+      final decoded = jsonDecode(body!) as Map<String, dynamic>;
+      final messages = decoded['messages'] as List;
+      final system = (messages.first as Map)['content'] as String;
+      expect(system, contains("Emo, boss's personal assistant"));
+      expect(system, contains('Likes tea'));
+      expect(system, contains('remember'));
+    });
+
+    test('remember action becomes a memory command', () async {
+      final brain = brainWith(MockClient((request) async {
+        return http.Response(
+          chatBody('{"action":"remember","target":"Prefers dark mode"}'),
+          200,
+        );
+      }));
+
+      final reply = await brain.interpret(
+        text: 'remember that I prefer dark mode',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(reply.command?.kind, IntentKind.remember);
+      expect(reply.command?.target, 'Prefers dark mode');
+    });
+
+    test('empty balance is reported as missing credits', () async {
+      final brain = brainWith(MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'error': {
+              'message': 'You have no credits remaining.',
+              'code': 'credit_balance_exhausted',
+            },
+          }),
+          429,
+        );
+      }));
+
+      final reply = await brain.interpret(
+        text: 'hello',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(reply.error, contains('no credits'));
     });
   });
 }

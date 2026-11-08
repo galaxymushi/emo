@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/cloud_brain.dart';
+import '../services/memory_store.dart';
 import '../services/voice_service.dart';
 import '../theme.dart';
 import '../widgets/emo_icons.dart';
@@ -52,6 +53,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await showEmoSheet<void>(
       context,
       builder: (_) => _CloudSheet(state: state),
+    );
+  }
+
+  Future<void> _editOwnerName() async {
+    final controller = TextEditingController(text: state.ownerName);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('What should Emo call you?'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 24,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'Boss'),
+          onSubmitted: (text) => Navigator.of(context).pop(text),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (value != null) await state.setOwnerName(value);
+  }
+
+  Future<void> _openMemorySheet() async {
+    await showEmoSheet<void>(
+      context,
+      builder: (_) => _MemorySheet(state: state),
     );
   }
 
@@ -314,6 +354,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     color: EmoColors.blue,
                     compact: true,
                   ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const SectionTitle(title: 'Emo'),
+            _Group(
+              children: [
+                _SettingRow(
+                  icon: Icons.badge_outlined,
+                  title: 'What Emo calls you',
+                  subtitle: state.ownerName,
+                  trailing: const StatusChip(
+                    label: 'Edit',
+                    color: EmoColors.blue,
+                    compact: true,
+                  ),
+                  onTap: _editOwnerName,
+                ),
+                _SettingRow(
+                  icon: Icons.waving_hand_outlined,
+                  title: 'Greet me on launch',
+                  subtitle: state.greetOnLaunch
+                      ? 'Emo says hello and offers help when the app opens'
+                      : 'Emo waits for you to speak first',
+                  trailing: EmoSwitch(
+                    value: state.greetOnLaunch,
+                    onChanged: state.setGreetOnLaunch,
+                  ),
+                ),
+                _SettingRow(
+                  icon: Icons.auto_awesome_outlined,
+                  title: 'Memory',
+                  subtitle: state.memory.isEmpty
+                      ? 'Nothing remembered yet — say “remember that …”'
+                      : '${state.memory.count} ${state.memory.count == 1 ? 'fact' : 'facts'} kept on this phone',
+                  trailing: const StatusChip(
+                    label: 'View',
+                    color: EmoColors.blue,
+                    compact: true,
+                  ),
+                  onTap: _openMemorySheet,
                 ),
               ],
             ),
@@ -883,6 +964,102 @@ class _PermissionRow extends StatelessWidget {
               ),
             ),
       onTap: granted ? null : () => showPermissionSheet(context, state, need),
+    );
+  }
+}
+
+class _MemorySheet extends StatelessWidget {
+  const _MemorySheet({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedBuilder(
+      animation: state,
+      builder: (context, _) {
+        final facts = state.memory.facts;
+        return SheetShell(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Emo’s memory', style: theme.textTheme.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                'Facts you asked Emo to keep about you. They stay on this phone and are sent only when Emo needs context to answer.',
+                style: theme.textTheme.bodySmall?.copyWith(height: 1.45),
+              ),
+              const SizedBox(height: 14),
+              if (facts.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  child: Text(
+                    'Nothing here yet. Say “remember that I like tea” or “my name is …”.',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: EmoColors.muted,
+                      height: 1.45,
+                    ),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    for (final fact in facts)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF2F7FF),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  fact.text,
+                                  style: theme.textTheme.bodyMedium
+                                      ?.copyWith(height: 1.35),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Forget this',
+                                onPressed: () =>
+                                    state.removeMemoryFact(fact.id),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 18,
+                                  color: EmoColors.muted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${facts.length} of ${MemoryStore.maxFacts} remembered',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed:
+                        facts.isEmpty ? null : () => state.clearMemory(),
+                    child: const Text('Forget all'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

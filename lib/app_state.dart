@@ -9,6 +9,8 @@ import 'models.dart';
 import 'services/cloud_brain.dart';
 import 'services/command_engine.dart';
 import 'services/device_bridge.dart';
+import 'services/memory_store.dart';
+import 'services/persona.dart';
 import 'services/update_service.dart';
 import 'services/voice_service.dart';
 
@@ -35,6 +37,7 @@ class AppState extends ChangeNotifier {
   final VoiceService voice = VoiceService();
   final CloudBrain cloud = CloudBrain();
   final UpdateService updateService = UpdateService();
+  final MemoryStore memory = MemoryStore();
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   SharedPreferences? _prefs;
@@ -48,6 +51,8 @@ class AppState extends ChangeNotifier {
   double speechRate = 0.5;
   bool cloudEnabled = false;
   String cloudProviderId = CloudProvider.gemini.id;
+  String ownerName = Persona.defaultOwner;
+  bool greetOnLaunch = true;
 
   String appVersion = '';
   bool replyNotifications = true;
@@ -107,15 +112,10 @@ class AppState extends ChangeNotifier {
     _loadRoutines();
     _loadActivity();
     await _loadCloud();
-    messages = [
-      ChatMessage(
-        id: 'welcome',
-        fromUser: false,
-        text:
-            "Hi — I'm Emo. Ask me to turn on the torch, open an app, call someone, or run a routine. I'll show every step as it happens.",
-        time: DateTime.now(),
-      ),
-    ];
+    ownerName = _prefs?.getString('emo.owner.name') ?? Persona.defaultOwner;
+    greetOnLaunch = _prefs?.getBool('emo.greet.launch') ?? true;
+    final prefs = _prefs;
+    if (prefs != null) await memory.load(prefs);
     await voice.init();
     voice.ttsEnabled = voiceReplies;
     await voice.setRate(speechRate);
@@ -134,11 +134,23 @@ class AppState extends ChangeNotifier {
     }
     chosen ??= voice.preferredVoice;
     if (chosen != null) await voice.applyVoice(chosen);
+    final salute = Persona.greeting(owner: ownerName, facts: memory.facts);
+    messages = [
+      ChatMessage(
+        id: 'welcome',
+        fromUser: false,
+        text: salute,
+        time: DateTime.now(),
+      ),
+    ];
     await refreshDevice();
     await _syncRoutines();
     await consumeRoutineEvents();
     booting = false;
     notifyListeners();
+    if (greetOnLaunch && voiceReplies) {
+      await voice.speak(salute);
+    }
     _updateTimer = Timer.periodic(
       const Duration(hours: 6),
       (_) => unawaited(checkForUpdates()),
@@ -259,6 +271,8 @@ class AppState extends ChangeNotifier {
           device: device,
           routines: routines,
           history: history,
+          owner: ownerName,
+          memory: memory,
         );
         if (result.command != null) {
           parsed = result.command!;
@@ -456,6 +470,12 @@ class AppState extends ChangeNotifier {
         return _search(p, holder);
       case IntentKind.runRoutine:
         return _routine(p, holder);
+      case IntentKind.remember:
+        return _remember(p);
+      case IntentKind.recall:
+        return _recall();
+      case IntentKind.forget:
+        return _forget(p);
       case IntentKind.help:
         return _help(p);
       case IntentKind.unknown:
@@ -1113,7 +1133,7 @@ class AppState extends ChangeNotifier {
   Future<_Outcome> _help(ParsedCommand p) async {
     if (p.mode == 'greeting') {
       return _Outcome(
-        reply: 'Hi. What would you like your phone to do?',
+        reply: Persona.greeting(owner: ownerName, facts: memory.facts),
         title: 'Greeting',
         icon: 'sparkle',
         status: ActivityStatus.info,
@@ -1134,6 +1154,91 @@ class AppState extends ChangeNotifier {
       title: 'Showed capabilities',
       icon: 'help',
       status: ActivityStatus.info,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Memory
+  // ---------------------------------------------------------------------------
+
+  Future<_Outcome> _remember(ParsedCommand p) async {
+    final fact = (p.target ?? '').trim();
+    if (p.mode == 'name') {
+      if (fact.isEmpty) {
+        return const _Outcome(
+          reply: 'What should I call you?',
+          title: 'Name needed',
+          icon: 'sparkle',
+          status: ActivityStatus.info,
+        );
+      }
+      final name = fact[0].toUpperCase() + fact.substring(1);
+      await setOwnerName(name);
+      return _Outcome(
+        reply: 'Noted, $ownerName. That is what I will call you.',
+        title: 'Name saved',
+        icon: 'sparkle',
+      );
+    }
+    if (fact.isEmpty) {
+      return const _Outcome(
+        reply: 'What should I remember? Say “remember that …”.',
+        title: 'Nothing to remember',
+        icon: 'sparkle',
+        status: ActivityStatus.info,
+      );
+    }
+    final added = await memory.add(fact);
+    notifyListeners();
+    return _Outcome(
+      reply: added
+          ? 'Noted, $ownerName. I will remember that.'
+          : 'I already had that one, $ownerName.',
+      title: added ? 'Remembered' : 'Already remembered',
+      icon: 'sparkle',
+    );
+  }
+
+  Future<_Outcome> _recall() async {
+    if (memory.isEmpty) {
+      return const _Outcome(
+        reply:
+            'My memory is empty for now. Tell me “remember that …” and I will keep it.',
+        title: 'Memory checked',
+        icon: 'sparkle',
+        status: ActivityStatus.info,
+      );
+    }
+    final shown = memory.facts.take(6).map((fact) => fact.text).join('; ');
+    final rest = memory.count - 6;
+    return _Outcome(
+      reply: rest > 0
+          ? 'I remember $shown; and $rest more.'
+          : 'I remember $shown.',
+      title: 'Memory checked',
+      icon: 'sparkle',
+      status: ActivityStatus.info,
+    );
+  }
+
+  Future<_Outcome> _forget(ParsedCommand p) async {
+    if (p.mode == 'all') {
+      await clearMemory();
+      return _Outcome(
+        reply: 'Memory wiped, $ownerName. Clean slate.',
+        title: 'Memory cleared',
+        icon: 'sparkle',
+      );
+    }
+    final removed = await memory.forget(p.target ?? '');
+    notifyListeners();
+    return _Outcome(
+      reply: removed > 0
+          ? 'Forgotten, $ownerName.'
+          : 'I could not find that in my memory, $ownerName.',
+      title: removed > 0 ? 'Memory updated' : 'Nothing matched',
+      icon: 'sparkle',
+      status: removed > 0 ? ActivityStatus.success : ActivityStatus.info,
     );
   }
 
@@ -1357,6 +1462,30 @@ class AppState extends ChangeNotifier {
     }
     replyNotifications = value;
     await _prefs?.setBool('emo.notify.replies', value);
+    notifyListeners();
+  }
+
+  Future<void> setOwnerName(String value) async {
+    var clean = value.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (clean.length > 24) clean = clean.substring(0, 24).trim();
+    ownerName = clean.isEmpty ? Persona.defaultOwner : clean;
+    await _prefs?.setString('emo.owner.name', ownerName);
+    notifyListeners();
+  }
+
+  Future<void> setGreetOnLaunch(bool value) async {
+    greetOnLaunch = value;
+    await _prefs?.setBool('emo.greet.launch', value);
+    notifyListeners();
+  }
+
+  Future<void> removeMemoryFact(String id) async {
+    await memory.remove(id);
+    notifyListeners();
+  }
+
+  Future<void> clearMemory() async {
+    await memory.clear();
     notifyListeners();
   }
 

@@ -145,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _Header(
-              greeting: greetingFor(now),
+              greeting: '${greetingFor(now)}, ${state.ownerName}',
               ready: device.available &&
                   device.accessibility &&
                   device.notificationAccess &&

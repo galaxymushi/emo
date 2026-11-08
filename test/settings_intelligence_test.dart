@@ -49,4 +49,23 @@ void main() {
     expect(find.text('App updates'), findsOneWidget);
     expect(find.text('Check'), findsOneWidget);
   });
+
+  testWidgets('Emo section shows identity and memory', (tester) async {
+    final state = AppState();
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: SettingsScreen(state: state))),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.text('What Emo calls you'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('What Emo calls you'), findsOneWidget);
+    expect(find.text('Greet me on launch'), findsOneWidget);
+    expect(find.text('Memory'), findsOneWidget);
+    expect(find.text('View'), findsOneWidget);
+  });
 }

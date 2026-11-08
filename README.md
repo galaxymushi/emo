@@ -23,6 +23,7 @@ Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 - **Voice & text commands** — built-in Android speech recognition (with live partial results) and TTS replies.
 - **Pro voice picker** — Emo auto-selects the best natural US English voice your phone's TTS engine exposes, with numbered voices, preview playback and a saved choice. Natural voices stream over the internet; standard voices work offline.
 - **Optional cloud brain** — when the offline parser doesn't recognize a request, Emo can ask a cloud model to translate it into one of its real device actions, or answer a general question. Gemini, OpenAI, OpenRouter, Groq and any OpenAI-compatible endpoint are supported with your own API key. The model only returns a structured intent; the phone still performs and reports the action.
+- **Persona and memory** — Emo introduces itself on launch ("Good morning, boss. Emo here — your buddy."), addresses you by the name you choose, and keeps a private on-device memory. Say "remember that I like tea", "my name is Sam", "what do you remember" or "forget everything". Remembered facts are available to the cloud brain when it needs context, and you can review or delete each one in Settings → Emo.
 - **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
 - **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
 - **Routines** — daily schedules via `AlarmManager` (DND, volume, torch, brightness), persisted across restarts and runnable even when the app is closed.
@@ -44,9 +45,9 @@ Android blocks some actions for third-party apps. Emo opens the right system sur
 
 ## Offline first, cloud optional
 
-Known commands never leave the phone. A deterministic on-device parser matches 25 command intents instantly, asks about state instead of toggling it ("is Wi-Fi on?"), and executes through real Android APIs.
+Known commands never leave the phone. A deterministic on-device parser matches 28 command intents instantly, asks about state instead of toggling it ("is Wi-Fi on?"), and executes through real Android APIs. Memory commands (`remember`, `recall`, `forget`) work with Cloud brain off too.
 
-When **Cloud brain** is enabled and the parser doesn't recognize a message, Emo sends that message, the last few chat turns and basic device state (battery, brightness, volume, Wi-Fi/Bluetooth/DND, routine names) to the provider you chose. The model must reply with a JSON action from Emo's fixed list; Emo validates it, executes it locally, and reports the real result. Questions that aren't phone actions get a short conversational answer. With Cloud brain off — the default — nothing is uploaded. The API key is kept in the Android keystore.
+When **Cloud brain** is enabled and the parser doesn't recognize a message, Emo sends that message, the last few chat turns, your display name, the facts you asked it to remember, and basic device state (battery, brightness, volume, Wi-Fi/Bluetooth/DND, routine names) to the provider you chose. The model must reply with a JSON action from Emo's fixed list; Emo validates it, executes it locally, and reports the real result. Questions that aren't phone actions get a short conversational answer. With Cloud brain off — the default — nothing is uploaded. The API key is kept in the Android keystore and the memory list stays in app storage on the phone.
 
 ## Permissions
 
@@ -74,6 +75,8 @@ lib/
   services/
     command_engine.dart     deterministic intent parser
     cloud_brain.dart        optional OpenAI-compatible NLU + chat client
+    persona.dart            Emo's identity, greetings and system preamble
+    memory_store.dart       private on-device facts Emo remembers about you
     update_service.dart     GitHub release check + version comparison
     device_bridge.dart      MethodChannel bridge to Kotlin
     voice_service.dart      speech_to_text + flutter_tts

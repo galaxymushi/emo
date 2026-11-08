@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 
 import '../models.dart';
 import 'command_engine.dart';
+import 'memory_store.dart';
+import 'persona.dart';
 
 class CloudProvider {
   const CloudProvider({
@@ -133,6 +135,8 @@ class CloudBrain {
     required DeviceState device,
     required List<Routine> routines,
     List<Map<String, String>> history = const [],
+    String owner = Persona.defaultOwner,
+    MemoryStore? memory,
   }) async {
     if (!configured) {
       return const CloudReply.failure(
@@ -140,7 +144,15 @@ class CloudBrain {
       );
     }
     final result = await _chat([
-      {'role': 'system', 'content': _systemPrompt(device, routines)},
+      {
+        'role': 'system',
+        'content': _systemPrompt(
+          device,
+          routines,
+          owner,
+          memory ?? MemoryStore(),
+        ),
+      },
       ...history,
       {'role': 'user', 'content': text},
     ]);
@@ -253,6 +265,17 @@ class CloudBrain {
       );
     }
     if (response.statusCode == 429) {
+      final detail = _errorDetail(response.body)?.toLowerCase() ?? '';
+      final noCredit = detail.contains('credit') ||
+          detail.contains('quota') ||
+          detail.contains('billing');
+      if (noCredit) {
+        return (
+          text: null,
+          error:
+              'This account has no credits left. Add billing with the provider, then try again.',
+        );
+      }
       return (
         text: null,
         error: 'The AI provider is rate-limiting requests. Try again shortly.',
@@ -533,6 +556,13 @@ class CloudBrain {
               ? "You don't have any routines yet."
               : 'I could not find a routine called $target. You have: $names.',
         );
+      case 'remember':
+      case 'note':
+        if (target == null) return ask('What should I remember?');
+        return CloudReply.action(
+          ParsedCommand(kind: IntentKind.remember, raw: raw, target: target),
+          'remembering that',
+        );
       case 'help':
         return CloudReply.action(command(IntentKind.help), 'help');
       default:
@@ -544,12 +574,18 @@ class CloudBrain {
     }
   }
 
-  String _systemPrompt(DeviceState device, List<Routine> routines) {
+  String _systemPrompt(
+    DeviceState device,
+    List<Routine> routines,
+    String owner,
+    MemoryStore memory,
+  ) {
     final routinesList = routines.isEmpty
         ? 'none'
         : routines.map((r) => '${r.name} (${r.triggerLabel})').join(', ');
     return '''
-You are the language layer of Emo, an Android assistant. The app executes commands; you never perform them and never claim they already happened.
+${Persona.systemPreamble(owner: owner, memory: memory)}
+You are also the language layer of Emo on this Android phone. The app executes commands; you never perform them and never claim they already happened.
 Reply with one JSON object only, no markdown:
 {"action": "...", "on": true, "target": "...", "body": "...", "value": 40, "mode": "...", "reply": "..."}
 
@@ -565,6 +601,7 @@ Actions and fields:
 - back, home, recents, notificationShade, quickSettings, lock, screenshot, swipeUp (scroll down), swipeDown (scroll up).
 - search: target is the query.
 - runRoutine: target is an exact routine name.
+- remember: target is one short fact to keep about $owner, written plainly.
 - help.
 - chat: questions, conversation, or clarification. Put the answer in "reply", under 45 words.
 

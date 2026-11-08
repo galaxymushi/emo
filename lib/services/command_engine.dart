@@ -26,6 +26,9 @@ enum IntentKind {
   search,
   runRoutine,
   help,
+  remember,
+  recall,
+  forget,
   unknown,
 }
 
@@ -88,6 +91,70 @@ class CommandParser {
         lower.contains('list commands') ||
         lower.contains('your commands')) {
       return ParsedCommand(kind: IntentKind.help, raw: text);
+    }
+
+    // Memory: identity, remembering, recall and forgetting.
+    final nameMatch = RegExp(
+      r"\b(?:my name is|call me|i am called)\s+([a-z][a-z' .-]{0,30})",
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (nameMatch != null) {
+      final name = (nameMatch.group(1) ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+      if (name.isNotEmpty &&
+          !RegExp(r'\b(?:back|later|tomorrow|now|maybe|please)\b')
+              .hasMatch(name.toLowerCase())) {
+        return ParsedCommand(
+          kind: IntentKind.remember,
+          raw: text,
+          target: name,
+          mode: 'name',
+        );
+      }
+    }
+
+    final rememberMatch = RegExp(
+      r'^(?:please\s+|can you\s+|could you\s+)?(?:remember|note|keep in mind)(?:\s+that)?\s+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (rememberMatch != null) {
+      final fact = (rememberMatch.group(1) ?? '').trim();
+      if (fact.isNotEmpty) {
+        return ParsedCommand(kind: IntentKind.remember, raw: text, target: fact);
+      }
+    }
+
+    if (RegExp(
+      r'\b(what do you (remember|know about me)|what have you remembered|'
+      r'what do you have on me|show (me )?your memory|your memory|'
+      r'do you remember me|what is in your memory)\b',
+    ).hasMatch(lower)) {
+      return ParsedCommand(kind: IntentKind.recall, raw: text);
+    }
+
+    if (hasAny([
+      'clear your memory',
+      'wipe your memory',
+      'erase your memory',
+      'clear memory',
+      'forget everything',
+      'forget it all',
+    ])) {
+      return ParsedCommand(kind: IntentKind.forget, raw: text, mode: 'all');
+    }
+    final forgetMatch = RegExp(
+      r'^(?:please\s+)?forget(?:\s+(?:that|about))?\s+(.+)$',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (forgetMatch != null) {
+      final what = (forgetMatch.group(1) ?? '').trim();
+      if (what.isNotEmpty) {
+        return ParsedCommand(
+          kind: IntentKind.forget,
+          raw: text,
+          target: what,
+          mode: 'one',
+        );
+      }
     }
 
     // Run a saved routine by name.
