@@ -23,6 +23,7 @@ Flutter + Kotlin · min Android 8.0 (API 26) · glassmorphism UI · light theme
 - **Voice & text commands** — built-in Android speech recognition (with live partial results) and TTS replies.
 - **Pro voice picker** — Emo auto-selects the best natural US English voice your phone's TTS engine exposes, with numbered voices, preview playback and a saved choice. Natural voices stream over the internet; standard voices work offline.
 - **Optional cloud brain** — when the offline parser doesn't recognize a request, Emo can ask a cloud model to translate it into one of its real device actions, or answer a general question. Gemini, OpenAI, OpenRouter, Groq and any OpenAI-compatible endpoint are supported with your own API key. The model only returns a structured intent; the phone still performs and reports the action.
+- **Optional on-device model** — Qwen 2.5 0.5B (about 521 MB, Apache-2.0) ships **inside the release APK**, and Emo unpacks it into private storage the first time you turn it on. It understands paraphrases and answers short questions with no network, no download and no API key, running through MediaPipe's LLM Inference on the phone's CPU; the cloud is used first when it is set up, and the local model catches failures.
 - **Persona and memory** — Emo introduces itself on launch ("Good morning, boss. Emo here — your buddy."), addresses you by the name you choose, and keeps a private on-device memory. Say "remember that I like tea", "my name is Sam", "what do you remember" or "forget everything". Remembered facts are available to the cloud brain when it needs context, and you can review or delete each one in Settings → Emo.
 - **System control** — torch, media volume, screen brightness, Do Not Disturb, battery/charging, Wi-Fi and Bluetooth state.
 - **Apps & communication** — open any installed app, search contacts and start a call, compose an SMS or WhatsApp message.
@@ -48,6 +49,8 @@ Android blocks some actions for third-party apps. Emo opens the right system sur
 Known commands never leave the phone. A deterministic on-device parser matches 28 command intents instantly, asks about state instead of toggling it ("is Wi-Fi on?"), and executes through real Android APIs. Memory commands (`remember`, `recall`, `forget`) work with Cloud brain off too.
 
 When **Cloud brain** is enabled and the parser doesn't recognize a message, Emo sends that message, the last few chat turns, your display name, the facts you asked it to remember, and basic device state (battery, brightness, volume, Wi-Fi/Bluetooth/DND, routine names) to the provider you chose. The model must reply with a JSON action from Emo's fixed list; Emo validates it, executes it locally, and reports the real result. Questions that aren't phone actions get a short conversational answer. With Cloud brain off — the default — nothing is uploaded. The API key is kept in the Android keystore and the memory list stays in app storage on the phone.
+
+**On-device model** is the offline alternative. Enable it in Settings → Intelligence and unrecognized requests go to MediaPipe's LLM Inference engine on the phone. The release APK contains the model, so the first enable copies it into the app's private storage — no download. (A build made without the model file present falls back to offering a one-time download instead.) If the cloud is also on, Emo tries the cloud first and falls back to the phone when the cloud has no key, no credits or no connection. Nothing is sent anywhere in local mode.
 
 ## Permissions
 
@@ -75,6 +78,8 @@ lib/
   services/
     command_engine.dart     deterministic intent parser
     cloud_brain.dart        optional OpenAI-compatible NLU + chat client
+    local_brain.dart        on-device model download + MediaPipe inference
+    intent_contract.dart    shared JSON action contract for every model
     persona.dart            Emo's identity, greetings and system preamble
     memory_store.dart       private on-device facts Emo remembers about you
     update_service.dart     GitHub release check + version comparison
@@ -86,6 +91,8 @@ lib/
 android/app/src/main/kotlin/.../MainActivity.kt
                             device snapshot, torch, DND, brightness, volume,
                             intents, contacts, alarms, accessibility service
+android/app/src/main/kotlin/.../LocalLlm.kt
+                            MediaPipe LLM Inference (CPU) + model lifecycle
 ```
 
 State lives in a single `AppState` (`ChangeNotifier`); persistence uses `shared_preferences`. Routines are scheduled with `AlarmManager` and restored on boot.
@@ -105,7 +112,7 @@ Install on a device with developer options enabled:
 adb install -r build/app/outputs/flutter-apk/app-release.apk
 ```
 
-Requires Flutter 3.35+ and JDK 17. No backend services. The cloud brain is optional and uses your own provider API key, added in **Settings → Intelligence**.
+Requires Flutter 3.35+ and JDK 17. No backend services. The cloud brain is optional and uses your own provider API key, added in **Settings → Intelligence**. The on-device model ships inside the release APK (~650 MB). To make a bundled build from source, copy `Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task` from [litert-community/Qwen2.5-0.5B-Instruct](https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct) into `android/app/src/main/assets/models/` — that folder is gitignored (GitHub rejects files over 100 MB). Without it the build still works and offers the model as an in-app download.
 
 ## Install from release
 

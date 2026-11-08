@@ -13,10 +13,19 @@ void main() {
 
     expect(find.text('Intelligence'), findsOneWidget);
     expect(find.text('Cloud brain'), findsOneWidget);
+    expect(find.text('On-device model'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('Model storage'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Model storage'), findsOneWidget);
+    expect(find.text('Get'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text('Cloud setup'),
-      200,
+      -200,
       scrollable: find.byType(Scrollable).first,
     );
     await tester.tap(find.text('Cloud setup'));

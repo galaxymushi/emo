@@ -98,6 +98,33 @@ class MainActivity : FlutterActivity() {
                 )
             )
             "appVersion" -> result.success(appVersion())
+            "filesDir" -> result.success(filesDir.absolutePath)
+            "localLlmStatus" -> result.success(LocalLlm.status())
+            "localLlmBundled" -> result.success(
+                LocalLlm.bundled(this, call.argument<String>("fileName") ?: "")
+            )
+            "localLlmInstall" -> runLocal(result) {
+                val bytes = when (val v = call.argument<Any>("bytes")) {
+                    is Number -> v.toLong()
+                    else -> 0L
+                }
+                LocalLlm.install(
+                    this,
+                    call.argument<String>("fileName") ?: "",
+                    bytes
+                )
+            }
+            "localLlmLoad" -> runLocal(result) {
+                LocalLlm.load(
+                    this,
+                    call.argument<String>("path") ?: "",
+                    call.argument<Int>("maxTokens") ?: 1024
+                )
+            }
+            "localLlmGenerate" -> runLocal(result) {
+                LocalLlm.generate(call.argument<String>("prompt") ?: "")
+            }
+            "localLlmUnload" -> runLocal(result) { LocalLlm.unload() }
             "syncRoutines" -> {
                 RoutineStore.save(this, call.argument<String>("json") ?: "[]")
                 result.success(mapOf("ok" to true))
@@ -109,6 +136,18 @@ class MainActivity : FlutterActivity() {
 
     private fun ok(message: String? = null): Map<String, Any?> =
         mapOf("ok" to true, "message" to message)
+
+    /** Model loading and generation are slow, so they never block the UI thread. */
+    private fun runLocal(result: MethodChannel.Result, block: () -> Map<String, Any?>) {
+        LocalLlm.executor.execute {
+            val outcome = try {
+                block()
+            } catch (t: Throwable) {
+                mapOf("ok" to false, "message" to (t.message ?: "On-device model failed"))
+            }
+            runOnUiThread { result.success(outcome) }
+        }
+    }
 
     private fun fail(message: String, needs: String? = null): Map<String, Any?> =
         mapOf("ok" to false, "message" to message, "needs" to needs)
@@ -588,5 +627,10 @@ class MainActivity : FlutterActivity() {
             // Ignore malformed event payloads.
         }
         return list
+    }
+
+    override fun onDestroy() {
+        LocalLlm.unload()
+        super.onDestroy()
     }
 }

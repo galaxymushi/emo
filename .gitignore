@@ -46,3 +46,7 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# The on-device model ships inside the APK but never in git: GitHub rejects
+# files over 100 MB. Copy it here before a bundled build — see README.
+/android/app/src/main/assets/models/

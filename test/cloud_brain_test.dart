@@ -329,5 +329,35 @@ void main() {
 
       expect(reply.error, contains('no credits'));
     });
+
+    test('a daily free-tier limit is not reported as missing credits',
+        () async {
+      final brain = brainWith(MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'error': {
+              'code': 429,
+              'message': 'You exceeded your current quota, please check your '
+                  'plan and billing details. Quota exceeded for metric: '
+                  'generate_content_free_tier_requests, limit: 20, model: '
+                  'gemini-3.8-flash, description: Generate content requests '
+                  'per day limit exceeded on Free Tier. Please retry in '
+                  '21h9m56s.',
+              'status': 'RESOURCE_EXHAUSTED',
+            },
+          }),
+          429,
+        );
+      }));
+
+      final reply = await brain.interpret(
+        text: 'hello',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(reply.error, contains('resets daily'));
+      expect(reply.error, isNot(contains('no credits')));
+    });
   });
 }

@@ -9,6 +9,7 @@ import 'models.dart';
 import 'services/cloud_brain.dart';
 import 'services/command_engine.dart';
 import 'services/device_bridge.dart';
+import 'services/local_brain.dart';
 import 'services/memory_store.dart';
 import 'services/persona.dart';
 import 'services/update_service.dart';
@@ -36,6 +37,7 @@ class AppState extends ChangeNotifier {
   final DeviceBridge bridge;
   final VoiceService voice = VoiceService();
   final CloudBrain cloud = CloudBrain();
+  final LocalBrain local = LocalBrain();
   final UpdateService updateService = UpdateService();
   final MemoryStore memory = MemoryStore();
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -51,6 +53,7 @@ class AppState extends ChangeNotifier {
   double speechRate = 0.5;
   bool cloudEnabled = false;
   String cloudProviderId = CloudProvider.gemini.id;
+  bool localEnabled = false;
   String ownerName = Persona.defaultOwner;
   bool greetOnLaunch = true;
 
@@ -66,6 +69,7 @@ class AppState extends ChangeNotifier {
 
   bool get cloudReady => cloudEnabled && cloud.configured;
   String get cloudProviderName => CloudProvider.byId(cloudProviderId).name;
+  bool get localReady => localEnabled && local.installed;
 
   List<ActivityEvent> activity = [];
   List<Routine> routines = [];
@@ -112,6 +116,9 @@ class AppState extends ChangeNotifier {
     _loadRoutines();
     _loadActivity();
     await _loadCloud();
+    localEnabled = _prefs?.getBool('emo.local.enabled') ?? false;
+    local.enabled = localEnabled;
+    unawaited(local.init().then((_) => notifyListeners()));
     ownerName = _prefs?.getString('emo.owner.name') ?? Persona.defaultOwner;
     greetOnLaunch = _prefs?.getBool('emo.greet.launch') ?? true;
     final prefs = _prefs;
@@ -259,50 +266,100 @@ class AppState extends ChangeNotifier {
 
     var parsed = CommandParser.parse(text, device, routines);
     String? chatReply;
-    String? cloudError;
+    String? brainError;
+    var answeredLocally = false;
 
-    if (parsed.kind == IntentKind.unknown && cloudEnabled) {
-      if (!cloud.configured) {
-        cloudError = 'Cloud AI is on but has no API key. Add one in Settings.';
-      } else {
-        final step = _addStep(reply, 'Asking Emo Cloud');
-        final result = await cloud.interpret(
-          text: text,
-          device: device,
-          routines: routines,
-          history: history,
-          owner: ownerName,
-          memory: memory,
-        );
-        if (result.command != null) {
-          parsed = result.command!;
-          step.status = ExecStatus.done;
-          step.detail = 'Understood as ${result.actionName}';
-        } else if (result.chat != null) {
-          chatReply = result.chat;
-          step.status = ExecStatus.done;
-          step.detail = 'Answered';
+    if (parsed.kind == IntentKind.unknown && (cloudEnabled || localEnabled)) {
+      var cloudHandled = false;
+      if (cloudEnabled) {
+        if (!cloud.configured) {
+          brainError = 'Cloud AI is on but has no API key. Add one in Settings.';
         } else {
-          cloudError = result.error ?? 'Cloud AI did not answer.';
-          step.status = ExecStatus.failed;
-          step.detail = cloudError;
+          final step = _addStep(reply, 'Asking Emo Cloud');
+          final result = await cloud.interpret(
+            text: text,
+            device: device,
+            routines: routines,
+            history: history,
+            owner: ownerName,
+            memory: memory,
+          );
+          if (result.command != null) {
+            parsed = result.command!;
+            step.status = ExecStatus.done;
+            step.detail = 'Understood as ${result.actionName}';
+            cloudHandled = true;
+          } else if (result.chat != null) {
+            chatReply = result.chat;
+            step.status = ExecStatus.done;
+            step.detail = 'Answered';
+            cloudHandled = true;
+          } else {
+            brainError = result.error ?? 'Cloud AI did not answer.';
+            step.status = ExecStatus.failed;
+            step.detail = brainError;
+          }
+          notifyListeners();
         }
-        notifyListeners();
+      }
+
+      if (!cloudHandled &&
+          chatReply == null &&
+          parsed.kind == IntentKind.unknown &&
+          localEnabled) {
+        if (!local.installed) {
+          // The model may ship inside the APK — unpack it before giving up.
+          await local.ensureInstalled();
+        }
+        if (!local.installed) {
+          const note = 'The on-device model is not downloaded yet.';
+          brainError = brainError == null ? note : '$brainError $note';
+        } else {
+          final step = _addStep(reply, 'Thinking on this phone');
+          final result = await local.interpret(
+            text: text,
+            device: device,
+            routines: routines,
+            history: history,
+            owner: ownerName,
+            memory: memory,
+          );
+          if (result.command != null) {
+            parsed = result.command!;
+            step.status = ExecStatus.done;
+            step.detail = 'Understood as ${result.actionName}';
+            answeredLocally = true;
+          } else if (result.chat != null) {
+            chatReply = result.chat;
+            step.status = ExecStatus.done;
+            step.detail = 'Answered on this phone';
+            answeredLocally = true;
+          } else {
+            final message =
+                result.error ?? 'The on-device model did not answer.';
+            step.status = ExecStatus.failed;
+            step.detail = message;
+            brainError = brainError == null ? message : '$brainError $message';
+          }
+          notifyListeners();
+        }
       }
     }
 
     final outcome = chatReply != null
         ? _Outcome(
             reply: chatReply,
-            title: 'Answered by Emo Cloud',
-            icon: 'cloud',
+            title: answeredLocally
+                ? 'Answered on this device'
+                : 'Answered by Emo Cloud',
+            icon: answeredLocally ? 'sparkle' : 'cloud',
             status: ActivityStatus.info,
           )
-        : cloudError != null
+        : brainError != null
             ? _Outcome(
-                reply: '$cloudError Your offline commands still work.',
-                title: 'Cloud AI unavailable',
-                icon: 'cloud',
+                reply: '$brainError Your offline commands still work.',
+                title: 'AI unavailable',
+                icon: cloudEnabled ? 'cloud' : 'sparkle',
                 status: ActivityStatus.failed,
               )
             : await _execute(parsed, reply);
@@ -1455,6 +1512,50 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setLocalEnabled(bool value) async {
+    localEnabled = value;
+    local.enabled = value;
+    await _prefs?.setBool('emo.local.enabled', value);
+    if (!value) {
+      await local.unload();
+    } else {
+      // A model that ships inside the APK is copied out the first time it
+      // is turned on, so nothing needs to be downloaded.
+      await local.ensureInstalled();
+    }
+    notifyListeners();
+  }
+
+  /// Installs the bundled model on demand; returns an error message or null.
+  Future<String?> prepareLocalModel() async {
+    final error = await local.ensureInstalled();
+    notifyListeners();
+    return error;
+  }
+
+  Future<void> refreshLocalModel() async {
+    await local.refresh();
+    notifyListeners();
+  }
+
+  Future<String?> downloadLocalModel() async {
+    final error = await local.download(
+      onProgress: (_) => notifyListeners(),
+    );
+    notifyListeners();
+    return error;
+  }
+
+  void cancelLocalDownload() {
+    local.cancelDownload();
+    notifyListeners();
+  }
+
+  Future<void> deleteLocalModel() async {
+    await local.delete();
+    notifyListeners();
+  }
+
   Future<void> setReplyNotifications(bool value) async {
     if (value && !device.notificationPermission) {
       final granted = await grantAccess('notifications');
@@ -1731,6 +1832,7 @@ class AppState extends ChangeNotifier {
     _updateTimer?.cancel();
     updateService.close();
     cloud.close();
+    local.close();
     super.dispose();
   }
 }

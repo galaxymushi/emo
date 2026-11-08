@@ -102,6 +102,144 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _toggleLocal(bool value) async {
+    await state.setLocalEnabled(value);
+    if (value && !state.local.installed && mounted) {
+      await _askDownloadLocal();
+    }
+  }
+
+  Future<void> _askDownloadLocal() async {
+    final model = state.local.model;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Download the on-device model?'),
+        content: Text(
+          '${model.name} is ${model.sizeLabel}. It downloads once, runs entirely '
+          'on this phone, and keeps working without internet.\n\n'
+          'Use Wi-Fi for the download and keep Emo open until it finishes.',
+          style: const TextStyle(height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Download'),
+          ),
+        ],
+      ),
+    );
+    if (go == true) await _downloadLocal();
+  }
+
+  Future<void> _downloadLocal() async {
+    final error = await state.downloadLocalModel();
+    if (!mounted) return;
+    emoSnack(
+      context,
+      error ?? '${state.local.model.name} is ready on this phone.',
+      icon: error == null ? Icons.memory_rounded : Icons.error_outline_rounded,
+      color: error == null ? EmoColors.success : EmoColors.warning,
+    );
+  }
+
+  Future<void> _deleteLocal() async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Delete the on-device model?'),
+        content: const Text(
+          'Emo will use only its built-in commands and the cloud until you '
+          'download the model again.',
+          style: TextStyle(height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return;
+    await state.deleteLocalModel();
+    if (!mounted) return;
+    emoSnack(
+      context,
+      'On-device model deleted.',
+      icon: Icons.delete_outline_rounded,
+      color: EmoColors.muted,
+    );
+  }
+
+  Future<void> _localTap() async {
+    final local = state.local;
+    if (local.downloading) {
+      state.cancelLocalDownload();
+      return;
+    }
+    if (local.bundled) {
+      if (!local.installed) {
+        final error = await state.prepareLocalModel();
+        if (!mounted) return;
+        emoSnack(
+          context,
+          error ?? '${local.model.name} is ready — it ships with this app.',
+          icon: error == null ? Icons.memory_rounded : Icons.error_outline_rounded,
+          color: error == null ? EmoColors.success : EmoColors.warning,
+        );
+        return;
+      }
+      await _bundledInfo();
+      return;
+    }
+    if (local.installed) {
+      _deleteLocal();
+      return;
+    }
+    await _askDownloadLocal();
+  }
+
+  Future<void> _bundledInfo() async {
+    final model = state.local.model;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Included with this app'),
+        content: Text(
+          '${model.name} (${model.sizeLabel}) ships inside this version of '
+          'Emo. There is nothing to download — it works offline from the '
+          'moment you turn it on, and it cannot be removed while Emo is '
+          'installed.',
+          style: const TextStyle(height: 1.45),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _toggleReplyAlerts(bool value) async {
     if (value && !state.device.notificationPermission) {
       final granted = await state.grantAccess('notifications');
@@ -484,6 +622,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   onTap: _openCloudSheet,
                 ),
+                _SettingRow(
+                  icon: Icons.memory_rounded,
+                  title: 'On-device model',
+                  subtitle: state.localEnabled
+                      ? (state.local.installed
+                          ? 'Answers on this phone when the cloud is off or fails'
+                          : 'Needs a one-time ${state.local.model.sizeLabel} download')
+                      : 'Off — no model stored on this phone',
+                  trailing: EmoSwitch(
+                    value: state.localEnabled,
+                    onChanged: _toggleLocal,
+                  ),
+                ),
+                _LocalModelRow(state: state, onTap: _localTap),
               ],
             ),
             const SizedBox(height: 24),
@@ -575,7 +727,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: Text(
                       state.cloudReady
                           ? 'Offline commands never leave your phone. With Cloud brain on, only requests Emo cannot handle offline, the last few chat messages and basic device state are sent to your chosen provider.'
-                          : 'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
+                          : state.localReady
+                              ? 'Emo runs on this phone. The on-device model answers without sending your words off the device.'
+                              : 'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontSize: 11.5,
                             height: 1.5,
@@ -832,6 +986,111 @@ class _SettingRow extends StatelessWidget {
     );
     if (onTap == null) return row;
     return Pressable(onTap: onTap, scale: 0.99, child: row);
+  }
+}
+
+class _LocalModelRow extends StatelessWidget {
+  const _LocalModelRow({required this.state, required this.onTap});
+
+  final AppState state;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final local = state.local;
+    final percent = (local.progress * 100).round();
+    final subtitle = local.downloading
+        ? 'Downloading $percent% — keep Emo open'
+        : local.installing
+            ? 'Unpacking ${local.model.name} from the app — one moment'
+            : local.bundled
+                ? (local.installed
+                    ? '${local.model.name} · ${local.model.sizeLabel} · included with the app'
+                    : '${local.model.name} · included — ready in a moment')
+                : local.installed
+                    ? '${local.model.name} · ${local.model.sizeLabel} stored on this phone'
+                    : local.error ??
+                        '${local.model.name} · ${local.model.sizeLabel} · download once, then it works offline';
+    return Pressable(
+      onTap: onTap,
+      scale: 0.99,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const IconBadge(
+                  icon: Icons.download_rounded,
+                  size: 38,
+                  radius: 12,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Model storage',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: EmoColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 11,
+                          height: 1.35,
+                          fontWeight: FontWeight.w500,
+                          color: EmoColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                StatusChip(
+                  label: local.downloading
+                      ? 'Stop'
+                      : local.installing
+                          ? 'Wait'
+                          : local.bundled
+                              ? 'In app'
+                              : (local.installed ? 'Delete' : 'Get'),
+                  color: local.downloading
+                      ? EmoColors.warning
+                      : local.installing
+                          ? EmoColors.blue
+                          : local.bundled
+                              ? EmoColors.success
+                              : (local.installed
+                                  ? EmoColors.muted
+                                  : EmoColors.blue),
+                  compact: true,
+                ),
+              ],
+            ),
+            if (local.downloading || local.installing) ...[
+              const SizedBox(height: 9),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: local.progress <= 0 ? null : local.progress,
+                  minHeight: 5,
+                  backgroundColor: EmoColors.blue.withValues(alpha: 0.08),
+                  valueColor: const AlwaysStoppedAnimation(EmoColors.blue),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 
