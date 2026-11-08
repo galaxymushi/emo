@@ -427,7 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Emo 1.1.1 · built for Android',
+                    'Emo 1.1.2 · built for Android',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: EmoColors.faint,
                           fontSize: 11,

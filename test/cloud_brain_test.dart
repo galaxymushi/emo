@@ -29,6 +29,35 @@ void main() {
       expect(CloudProvider.gemini.model, isNotEmpty);
       expect(CloudProvider.openrouter.model, isNot('google/gemini-2.5-flash'));
     });
+
+    test('migrates a saved retired model to the preset default', () {
+      expect(
+        CloudProvider.resolveModel(CloudProvider.gemini, 'gemini-2.5-flash'),
+        CloudProvider.gemini.model,
+      );
+      expect(
+        CloudProvider.resolveModel(
+          CloudProvider.openrouter,
+          'google/gemini-2.5-flash',
+        ),
+        CloudProvider.openrouter.model,
+      );
+      expect(
+        CloudProvider.resolveModel(CloudProvider.gemini, null),
+        CloudProvider.gemini.model,
+      );
+    });
+
+    test('keeps a non-retired model and custom models', () {
+      expect(
+        CloudProvider.resolveModel(CloudProvider.gemini, 'gemini-3.5-flash'),
+        'gemini-3.5-flash',
+      );
+      expect(
+        CloudProvider.resolveModel(CloudProvider.custom, 'llama3'),
+        'llama3',
+      );
+    });
   });
 
   group('CloudBrain', () {
@@ -114,8 +143,42 @@ void main() {
       expect(reply.error, contains('rejected'));
     });
 
-    test('surfaces the provider reason for a bad key', () async {
-      final brain = brainWith(MockClient((_) async => http.Response(
+    test('retries once when the model is busy', () async {
+      var calls = 0;
+      final brain = brainWith(MockClient((_) async {
+        calls++;
+        if (calls == 1) return http.Response('{}', 503);
+        return http.Response(
+          chatBody('{"action":"chat","reply":"Hello."}'),
+          200,
+        );
+      }));
+
+      final reply = await brain.interpret(
+        text: 'hi',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(calls, 2);
+      expect(reply.chat, 'Hello.');
+    });
+
+    test('explains a persistently busy model', () async {
+      final brain = brainWith(
+        MockClient((_) async => http.Response('{}', 503)),
+      );
+
+      final reply = await brain.interpret(
+        text: 'hi',
+        device: const DeviceState(),
+        routines: const [],
+      );
+
+      expect(reply.error, contains('busy'));
+    });
+
+    test('surfaces the provider reason for a bad key', () async {      final brain = brainWith(MockClient((_) async => http.Response(
             jsonEncode({
               'error': {
                 'code': 400,

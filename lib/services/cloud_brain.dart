@@ -73,6 +73,20 @@ class CloudProvider {
     }
     return gemini;
   }
+
+  /// Models Google has retired; saved configs from older builds must not
+  /// keep pointing at them.
+  static const retiredModels = {
+    'gemini-2.5-flash',
+    'google/gemini-2.5-flash',
+  };
+
+  static String resolveModel(CloudProvider provider, String? saved) {
+    final model = saved?.trim() ?? '';
+    if (provider.isCustom) return model;
+    if (model.isEmpty || retiredModels.contains(model)) return provider.model;
+    return model;
+  }
 }
 
 class CloudReply {
@@ -170,37 +184,45 @@ class CloudBrain {
     List<Map<String, String>> messages, {
     double temperature = 0.2,
   }) async {
+    final payload = jsonEncode({
+      'model': model.trim(),
+      'messages': messages,
+      'temperature': temperature,
+    });
     http.Response response;
-    try {
-      response = await _client
-          .post(
-            Uri.parse(endpoint),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${apiKey.trim()}',
-            },
-            body: jsonEncode({
-              'model': model.trim(),
-              'messages': messages,
-              'temperature': temperature,
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
-    } on TimeoutException {
-      return (
-        text: null,
-        error: 'The cloud took too long to answer. Check your connection.',
-      );
-    } on http.ClientException {
-      return (
-        text: null,
-        error: 'Could not reach the cloud. Check your internet connection.',
-      );
-    } catch (_) {
-      return (
-        text: null,
-        error: 'Could not reach the cloud. Check your internet connection.',
-      );
+    for (var attempt = 0;; attempt++) {
+      try {
+        response = await _client
+            .post(
+              Uri.parse(endpoint),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${apiKey.trim()}',
+              },
+              body: payload,
+            )
+            .timeout(const Duration(seconds: 30));
+      } on TimeoutException {
+        return (
+          text: null,
+          error: 'The cloud took too long to answer. Check your connection.',
+        );
+      } on http.ClientException {
+        return (
+          text: null,
+          error: 'Could not reach the cloud. Check your internet connection.',
+        );
+      } catch (_) {
+        return (
+          text: null,
+          error: 'Could not reach the cloud. Check your internet connection.',
+        );
+      }
+      if (response.statusCode == 503 && attempt == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        continue;
+      }
+      break;
     }
 
     if (response.statusCode == 400 ||
@@ -233,6 +255,12 @@ class CloudBrain {
       return (
         text: null,
         error: 'The AI provider is rate-limiting requests. Try again shortly.',
+      );
+    }
+    if (response.statusCode == 503) {
+      return (
+        text: null,
+        error: 'The model is busy right now. Try again in a moment.',
       );
     }
     if (response.statusCode != 200) {

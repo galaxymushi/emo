@@ -132,8 +132,10 @@ class AppState extends ChangeNotifier {
     cloudProviderId = provider.id;
     cloudEnabled = _prefs?.getBool('emo.cloud.enabled') ?? false;
     final savedModel = _prefs?.getString('emo.cloud.model');
-    cloud.model =
-        savedModel == null || savedModel.trim().isEmpty ? provider.model : savedModel;
+    cloud.model = CloudProvider.resolveModel(provider, savedModel);
+    if (savedModel != null && savedModel != cloud.model) {
+      await _prefs?.setString('emo.cloud.model', cloud.model);
+    }
     final savedEndpoint = _prefs?.getString('emo.cloud.endpoint') ?? '';
     cloud.endpoint = provider.isCustom ? savedEndpoint : provider.endpoint;
     try {
@@ -1331,8 +1333,7 @@ class AppState extends ChangeNotifier {
     final provider = CloudProvider.byId(providerId);
     cloudProviderId = provider.id;
     cloud.apiKey = apiKey.trim();
-    cloud.model =
-        model.trim().isEmpty ? provider.model : model.trim();
+    cloud.model = CloudProvider.resolveModel(provider, model);
     cloud.endpoint = provider.isCustom ? endpoint.trim() : provider.endpoint;
     await _prefs?.setString('emo.cloud.provider', provider.id);
     await _prefs?.setString('emo.cloud.model', cloud.model);
