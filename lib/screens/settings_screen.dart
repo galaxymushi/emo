@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../services/cloud_brain.dart';
+import '../services/google_tts_service.dart';
 import '../services/memory_store.dart';
 import '../services/voice_service.dart';
 import '../theme.dart';
@@ -102,143 +103,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _toggleLocal(bool value) async {
-    await state.setLocalEnabled(value);
-    if (value && !state.local.installed && mounted) {
-      await _askDownloadLocal();
-    }
-  }
-
-  Future<void> _askDownloadLocal() async {
-    final model = state.local.model;
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Download the on-device model?'),
-        content: Text(
-          '${model.name} is ${model.sizeLabel}. It downloads once, runs entirely '
-          'on this phone, and keeps working without internet.\n\n'
-          'Use Wi-Fi for the download and keep Emo open until it finishes.',
-          style: const TextStyle(height: 1.45),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Download'),
-          ),
-        ],
-      ),
-    );
-    if (go == true) await _downloadLocal();
-  }
-
-  Future<void> _downloadLocal() async {
-    final error = await state.downloadLocalModel();
-    if (!mounted) return;
-    emoSnack(
-      context,
-      error ?? '${state.local.model.name} is ready on this phone.',
-      icon: error == null ? Icons.memory_rounded : Icons.error_outline_rounded,
-      color: error == null ? EmoColors.success : EmoColors.warning,
-    );
-  }
-
-  Future<void> _deleteLocal() async {
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Delete the on-device model?'),
-        content: const Text(
-          'Emo will use only its built-in commands and the cloud until you '
-          'download the model again.',
-          style: TextStyle(height: 1.45),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Keep'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (go != true) return;
-    await state.deleteLocalModel();
-    if (!mounted) return;
-    emoSnack(
-      context,
-      'On-device model deleted.',
-      icon: Icons.delete_outline_rounded,
-      color: EmoColors.muted,
-    );
-  }
-
-  Future<void> _localTap() async {
-    final local = state.local;
-    if (local.downloading) {
-      state.cancelLocalDownload();
-      return;
-    }
-    if (local.bundled) {
-      if (!local.installed) {
-        final error = await state.prepareLocalModel();
-        if (!mounted) return;
-        emoSnack(
-          context,
-          error ?? '${local.model.name} is ready — it ships with this app.',
-          icon: error == null ? Icons.memory_rounded : Icons.error_outline_rounded,
-          color: error == null ? EmoColors.success : EmoColors.warning,
-        );
-        return;
-      }
-      await _bundledInfo();
-      return;
-    }
-    if (local.installed) {
-      _deleteLocal();
-      return;
-    }
-    await _askDownloadLocal();
-  }
-
-  Future<void> _bundledInfo() async {
-    final model = state.local.model;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Included with this app'),
-        content: Text(
-          '${model.name} (${model.sizeLabel}) ships inside this version of '
-          'Emo. There is nothing to download — it works offline from the '
-          'moment you turn it on, and it cannot be removed while Emo is '
-          'installed.',
-          style: const TextStyle(height: 1.45),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Got it'),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _toggleReplyAlerts(bool value) async {
     if (value && !state.device.notificationPermission) {
@@ -473,9 +337,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SettingRow(
                   icon: Icons.graphic_eq_rounded,
                   title: 'Voice',
-                  subtitle: state.voice.currentVoice == null
-                      ? "Using your phone's default voice"
-                      : '${state.voiceLabel} · ${state.voice.currentVoice!.isNatural ? 'internet' : 'offline'}',
+                  subtitle: state.googleTts.enabled && state.googleTts.configured
+                      ? 'Google AI · ${state.googleTts.voice.name}'
+                      : (state.voice.currentVoice == null
+                          ? "Using your phone's default voice"
+                          : '${state.voiceLabel} · ${state.voice.currentVoice!.isNatural ? 'internet' : 'offline'}'),
                   trailing: const StatusChip(
                     label: 'Change',
                     color: EmoColors.blue,
@@ -622,20 +488,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   onTap: _openCloudSheet,
                 ),
-                _SettingRow(
-                  icon: Icons.memory_rounded,
-                  title: 'On-device model',
-                  subtitle: state.localEnabled
-                      ? (state.local.installed
-                          ? 'Answers on this phone when the cloud is off or fails'
-                          : 'Needs a one-time ${state.local.model.sizeLabel} download')
-                      : 'Off — no model stored on this phone',
-                  trailing: EmoSwitch(
-                    value: state.localEnabled,
-                    onChanged: _toggleLocal,
-                  ),
-                ),
-                _LocalModelRow(state: state, onTap: _localTap),
+
               ],
             ),
             const SizedBox(height: 24),
@@ -727,9 +580,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     child: Text(
                       state.cloudReady
                           ? 'Offline commands never leave your phone. With Cloud brain on, only requests Emo cannot handle offline, the last few chat messages and basic device state are sent to your chosen provider.'
-                          : state.localReady
-                              ? 'Emo runs on this phone. The on-device model answers without sending your words off the device.'
-                              : 'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
+                                                        : 'Emo runs on this phone. Your commands, messages and notifications are never uploaded.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             fontSize: 11.5,
                             height: 1.5,
@@ -989,110 +840,6 @@ class _SettingRow extends StatelessWidget {
   }
 }
 
-class _LocalModelRow extends StatelessWidget {
-  const _LocalModelRow({required this.state, required this.onTap});
-
-  final AppState state;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final local = state.local;
-    final percent = (local.progress * 100).round();
-    final subtitle = local.downloading
-        ? 'Downloading $percent% — keep Emo open'
-        : local.installing
-            ? 'Unpacking ${local.model.name} from the app — one moment'
-            : local.bundled
-                ? (local.installed
-                    ? '${local.model.name} · ${local.model.sizeLabel} · included with the app'
-                    : '${local.model.name} · included — ready in a moment')
-                : local.installed
-                    ? '${local.model.name} · ${local.model.sizeLabel} stored on this phone'
-                    : local.error ??
-                        '${local.model.name} · ${local.model.sizeLabel} · download once, then it works offline';
-    return Pressable(
-      onTap: onTap,
-      scale: 0.99,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                const IconBadge(
-                  icon: Icons.download_rounded,
-                  size: 38,
-                  radius: 12,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Model storage',
-                        style: TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: EmoColors.ink,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(
-                          fontFamily: 'Manrope',
-                          fontSize: 11,
-                          height: 1.35,
-                          fontWeight: FontWeight.w500,
-                          color: EmoColors.muted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                StatusChip(
-                  label: local.downloading
-                      ? 'Stop'
-                      : local.installing
-                          ? 'Wait'
-                          : local.bundled
-                              ? 'In app'
-                              : (local.installed ? 'Delete' : 'Get'),
-                  color: local.downloading
-                      ? EmoColors.warning
-                      : local.installing
-                          ? EmoColors.blue
-                          : local.bundled
-                              ? EmoColors.success
-                              : (local.installed
-                                  ? EmoColors.muted
-                                  : EmoColors.blue),
-                  compact: true,
-                ),
-              ],
-            ),
-            if (local.downloading || local.installing) ...[
-              const SizedBox(height: 9),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: LinearProgressIndicator(
-                  value: local.progress <= 0 ? null : local.progress,
-                  minHeight: 5,
-                  backgroundColor: EmoColors.blue.withValues(alpha: 0.08),
-                  valueColor: const AlwaysStoppedAnimation(EmoColors.blue),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _RateRow extends StatelessWidget {
   const _RateRow({
@@ -1689,17 +1436,27 @@ class _CloudField extends StatelessWidget {
   }
 }
 
-class _VoiceSheet extends StatelessWidget {
+class _VoiceSheet extends StatefulWidget {
   const _VoiceSheet({required this.state});
 
   final AppState state;
 
   @override
+  State<_VoiceSheet> createState() => _VoiceSheetState();
+}
+
+class _VoiceSheetState extends State<_VoiceSheet> {
+  bool _showOffline = false;
+
+  @override
   Widget build(BuildContext context) {
+    final state = widget.state;
     final english = state.voice.voices.where((v) => v.isEnglish).toList();
     final list = english.isEmpty ? state.voice.voices : english;
     final visible = list.length > 12 ? list.sublist(0, 12) : list;
     final current = state.voice.currentVoice;
+    final geminiVoices = GoogleTtsVoice.all.where((v) => v.isGemini).toList();
+    final journeyVoices = GoogleTtsVoice.all.where((v) => !v.isGemini).toList();
 
     return SheetShell(
       child: Column(
@@ -1709,49 +1466,202 @@ class _VoiceSheet extends StatelessWidget {
           Text('Choose a voice', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 4),
           Text(
-            'Natural voices sound more human but need an internet connection. Standard voices work offline.',
+            'Google AI voices sound natural and human. Device voices run offline.',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.45),
           ),
           const SizedBox(height: 14),
-          if (visible.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: EmoColors.blue.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                "This phone's text-to-speech engine didn't report any voices. Install voice data in Android Settings → System → Languages & input → Text-to-speech output.",
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      height: 1.45,
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded, size: 16, color: EmoColors.blue),
+              const SizedBox(width: 6),
+              Text(
+                'Gemini Flagship AI Voices',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: EmoColors.ink,
                     ),
               ),
-            )
-          else
-            for (var index = 0; index < visible.length; index++)
-              _VoiceRow(
-                voice: visible[index],
-                index: index,
-                selected: current != null &&
-                    current.name == visible[index].name &&
-                    current.locale == visible[index].locale,
-                onPreview: () => state.voice.previewVoice(visible[index]),
-                onSelect: () async {
-                  await state.setEmoVoice(visible[index]);
-                  if (context.mounted) Navigator.of(context).pop();
-                },
-              ),
-          const SizedBox(height: 6),
-          Text(
-            'Voices come from your phone. Install more in Android Settings → Text-to-speech.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontSize: 10.5,
-                  height: 1.45,
-                  color: EmoColors.faint,
-                ),
+            ],
           ),
+          const SizedBox(height: 8),
+          for (final gv in geminiVoices)
+            _GoogleVoiceRow(
+              voice: gv,
+              selected: state.googleTts.enabled && state.googleTts.voice.id == gv.id,
+              onPreview: () => state.previewGoogleTtsVoice(gv),
+              onSelect: () async {
+                await state.setGoogleTtsEnabled(true);
+                await state.setGoogleTtsVoice(gv);
+                if (context.mounted) Navigator.of(context).pop();
+              },
+            ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Icon(Icons.cloud_queue_rounded, size: 16, color: EmoColors.blueInk),
+              const SizedBox(width: 6),
+              Text(
+                'Google Cloud Journey Voices',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: EmoColors.ink,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final gv in journeyVoices)
+            _GoogleVoiceRow(
+              voice: gv,
+              selected: state.googleTts.enabled && state.googleTts.voice.id == gv.id,
+              onPreview: () => state.previewGoogleTtsVoice(gv),
+              onSelect: () async {
+                await state.setGoogleTtsEnabled(true);
+                await state.setGoogleTtsVoice(gv);
+                if (context.mounted) Navigator.of(context).pop();
+              },
+            ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: () => setState(() => _showOffline = !_showOffline),
+            borderRadius: BorderRadius.circular(10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    _showOffline ? Icons.keyboard_arrow_down_rounded : Icons.keyboard_arrow_right_rounded,
+                    size: 18,
+                    color: EmoColors.muted,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Device Voices (Offline / Legacy)',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: EmoColors.muted,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_showOffline) ...[
+            const SizedBox(height: 8),
+            if (visible.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: EmoColors.blue.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  "This phone's text-to-speech engine didn't report any voices.",
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        height: 1.45,
+                      ),
+                ),
+              )
+            else
+              for (var index = 0; index < visible.length; index++)
+                _VoiceRow(
+                  voice: visible[index],
+                  index: index,
+                  selected: !state.googleTts.enabled &&
+                      current != null &&
+                      current.name == visible[index].name &&
+                      current.locale == visible[index].locale,
+                  onPreview: () => state.voice.previewVoice(visible[index]),
+                  onSelect: () async {
+                    await state.setGoogleTtsEnabled(false);
+                    await state.setEmoVoice(visible[index]);
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+class _GoogleVoiceRow extends StatelessWidget {
+  const _GoogleVoiceRow({
+    required this.voice,
+    required this.selected,
+    required this.onSelect,
+    required this.onPreview,
+  });
+
+  final GoogleTtsVoice voice;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onPreview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      onTap: onSelect,
+      scale: 0.99,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? EmoColors.blue.withValues(alpha: 0.08) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? EmoColors.blue.withValues(alpha: 0.35)
+                : Colors.white.withValues(alpha: 0.9),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        voice.name,
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontSize: 13,
+                          fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                          color: selected ? EmoColors.blue : EmoColors.ink,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      StatusChip(
+                        label: voice.gender,
+                        color: selected ? EmoColors.blue : EmoColors.muted,
+                        compact: true,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    voice.description,
+                    style: const TextStyle(
+                      fontFamily: 'Manrope',
+                      fontSize: 11,
+                      color: EmoColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Preview voice',
+              icon: const Icon(Icons.play_circle_outline_rounded, size: 22),
+              color: selected ? EmoColors.blue : EmoColors.ink,
+              onPressed: onPreview,
+            ),
+          ],
+        ),
       ),
     );
   }

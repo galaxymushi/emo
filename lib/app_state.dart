@@ -9,7 +9,7 @@ import 'models.dart';
 import 'services/cloud_brain.dart';
 import 'services/command_engine.dart';
 import 'services/device_bridge.dart';
-import 'services/local_brain.dart';
+import 'services/google_tts_service.dart';
 import 'services/memory_store.dart';
 import 'services/persona.dart';
 import 'services/update_service.dart';
@@ -37,7 +37,7 @@ class AppState extends ChangeNotifier {
   final DeviceBridge bridge;
   final VoiceService voice = VoiceService();
   final CloudBrain cloud = CloudBrain();
-  final LocalBrain local = LocalBrain();
+  final GoogleTtsService googleTts = GoogleTtsService();
   final UpdateService updateService = UpdateService();
   final MemoryStore memory = MemoryStore();
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -53,7 +53,6 @@ class AppState extends ChangeNotifier {
   double speechRate = 0.5;
   bool cloudEnabled = false;
   String cloudProviderId = CloudProvider.gemini.id;
-  bool localEnabled = false;
   String ownerName = Persona.defaultOwner;
   bool greetOnLaunch = true;
 
@@ -69,7 +68,6 @@ class AppState extends ChangeNotifier {
 
   bool get cloudReady => cloudEnabled && cloud.configured;
   String get cloudProviderName => CloudProvider.byId(cloudProviderId).name;
-  bool get localReady => localEnabled && local.installed;
 
   List<ActivityEvent> activity = [];
   List<Routine> routines = [];
@@ -116,13 +114,13 @@ class AppState extends ChangeNotifier {
     _loadRoutines();
     _loadActivity();
     await _loadCloud();
-    localEnabled = _prefs?.getBool('emo.local.enabled') ?? false;
-    local.enabled = localEnabled;
-    unawaited(local.init().then((_) => notifyListeners()));
     ownerName = _prefs?.getString('emo.owner.name') ?? Persona.defaultOwner;
     greetOnLaunch = _prefs?.getBool('emo.greet.launch') ?? true;
     final prefs = _prefs;
     if (prefs != null) await memory.load(prefs);
+    voice.googleTts = googleTts;
+    voice.onPlayAudio = bridge.playAudio;
+    voice.onStopAudio = bridge.stopAudio;
     await voice.init();
     voice.ttsEnabled = voiceReplies;
     await voice.setRate(speechRate);
@@ -172,7 +170,7 @@ class AppState extends ChangeNotifier {
         _prefs?.getString('emo.cloud.provider') ?? CloudProvider.gemini.id;
     final provider = CloudProvider.byId(providerId);
     cloudProviderId = provider.id;
-    cloudEnabled = _prefs?.getBool('emo.cloud.enabled') ?? false;
+    cloudEnabled = _prefs?.getBool('emo.cloud.enabled') ?? true;
     final savedModel = _prefs?.getString('emo.cloud.model');
     cloud.model = CloudProvider.resolveModel(provider, savedModel);
     if (savedModel != null && savedModel != cloud.model) {
@@ -180,11 +178,22 @@ class AppState extends ChangeNotifier {
     }
     final savedEndpoint = _prefs?.getString('emo.cloud.endpoint') ?? '';
     cloud.endpoint = provider.isCustom ? savedEndpoint : provider.endpoint;
+    const defaultGoogleKey =
+        String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
     try {
-      cloud.apiKey = await _secure.read(key: 'emo.cloud.key') ?? '';
+      final savedKey = await _secure.read(key: 'emo.cloud.key');
+      cloud.apiKey = (savedKey != null && savedKey.isNotEmpty)
+          ? savedKey
+          : defaultGoogleKey;
     } catch (_) {
-      cloud.apiKey = '';
+      cloud.apiKey = defaultGoogleKey;
     }
+    final savedTtsVoice = _prefs?.getString('emo.googleTts.voice');
+    if (savedTtsVoice != null) {
+      googleTts.voice = GoogleTtsVoice.byId(savedTtsVoice);
+    }
+    googleTts.enabled = _prefs?.getBool('emo.googleTts.enabled') ?? true;
+    googleTts.apiKey = cloud.apiKey;
   }
 
   void _loadRoutines() {
@@ -267,92 +276,49 @@ class AppState extends ChangeNotifier {
     var parsed = CommandParser.parse(text, device, routines);
     String? chatReply;
     String? brainError;
-    var answeredLocally = false;
 
-    if (parsed.kind == IntentKind.unknown && (cloudEnabled || localEnabled)) {
-      var cloudHandled = false;
-      if (cloudEnabled) {
-        if (!cloud.configured) {
-          brainError = 'Cloud AI is on but has no API key. Add one in Settings.';
-        } else {
-          final step = _addStep(reply, 'Asking Emo Cloud');
-          final result = await cloud.interpret(
-            text: text,
-            device: device,
-            routines: routines,
-            history: history,
-            owner: ownerName,
-            memory: memory,
-          );
-          if (result.command != null) {
-            parsed = result.command!;
-            step.status = ExecStatus.done;
-            step.detail = 'Understood as ${result.actionName}';
-            cloudHandled = true;
-          } else if (result.chat != null) {
-            chatReply = result.chat;
-            step.status = ExecStatus.done;
-            step.detail = 'Answered';
-            cloudHandled = true;
-          } else {
-            brainError = result.error ?? 'Cloud AI did not answer.';
-            step.status = ExecStatus.failed;
-            step.detail = brainError;
-          }
-          notifyListeners();
-        }
-      }
+    // Direct hardware actions (torch, volume, brightness, wifi, bluetooth, dnd)
+    // can execute immediately offline when unambiguous.
+    // For conversational messages, greetings, questions, or unknown queries,
+    // when Cloud AI (Gemini) is enabled, let Gemini answer with its genuine intelligence!
+    final bool shouldAskCloud = cloudEnabled &&
+        (parsed.kind == IntentKind.unknown || parsed.kind == IntentKind.help);
 
-      if (!cloudHandled &&
-          chatReply == null &&
-          parsed.kind == IntentKind.unknown &&
-          localEnabled) {
-        if (!local.installed) {
-          // The model may ship inside the APK — unpack it before giving up.
-          await local.ensureInstalled();
-        }
-        if (!local.installed) {
-          const note = 'The on-device model is not downloaded yet.';
-          brainError = brainError == null ? note : '$brainError $note';
+    if (shouldAskCloud) {
+      if (!cloud.configured) {
+        brainError = 'Cloud AI is on but has no API key. Add one in Settings.';
+      } else {
+        final step = _addStep(reply, 'Asking Gemini');
+        final result = await cloud.interpret(
+          text: text,
+          device: device,
+          routines: routines,
+          history: history,
+          owner: ownerName,
+          memory: memory,
+        );
+        if (result.command != null) {
+          parsed = result.command!;
+          step.status = ExecStatus.done;
+          step.detail = 'Understood as ${result.actionName}';
+        } else if (result.chat != null) {
+          chatReply = result.chat;
+          step.status = ExecStatus.done;
+          step.detail = 'Answered';
         } else {
-          final step = _addStep(reply, 'Thinking on this phone');
-          final result = await local.interpret(
-            text: text,
-            device: device,
-            routines: routines,
-            history: history,
-            owner: ownerName,
-            memory: memory,
-          );
-          if (result.command != null) {
-            parsed = result.command!;
-            step.status = ExecStatus.done;
-            step.detail = 'Understood as ${result.actionName}';
-            answeredLocally = true;
-          } else if (result.chat != null) {
-            chatReply = result.chat;
-            step.status = ExecStatus.done;
-            step.detail = 'Answered on this phone';
-            answeredLocally = true;
-          } else {
-            final message =
-                result.error ?? 'The on-device model did not answer.';
-            step.status = ExecStatus.failed;
-            step.detail = message;
-            brainError = brainError == null ? message : '$brainError $message';
-          }
-          notifyListeners();
+          brainError = result.error ?? 'Gemini did not answer.';
+          step.status = ExecStatus.failed;
+          step.detail = brainError;
         }
+        notifyListeners();
       }
     }
 
     final outcome = chatReply != null
         ? _Outcome(
             reply: chatReply,
-            title: answeredLocally
-                ? 'Answered on this device'
-                : 'Answered by Emo Cloud',
-            icon: answeredLocally ? 'sparkle' : 'cloud',
+            title: 'Answered by Emo Cloud',
+            icon: 'cloud',
             status: ActivityStatus.info,
           )
         : brainError != null
@@ -1512,49 +1478,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> setLocalEnabled(bool value) async {
-    localEnabled = value;
-    local.enabled = value;
-    await _prefs?.setBool('emo.local.enabled', value);
-    if (!value) {
-      await local.unload();
-    } else {
-      // A model that ships inside the APK is copied out the first time it
-      // is turned on, so nothing needs to be downloaded.
-      await local.ensureInstalled();
-    }
-    notifyListeners();
-  }
-
-  /// Installs the bundled model on demand; returns an error message or null.
-  Future<String?> prepareLocalModel() async {
-    final error = await local.ensureInstalled();
-    notifyListeners();
-    return error;
-  }
-
-  Future<void> refreshLocalModel() async {
-    await local.refresh();
-    notifyListeners();
-  }
-
-  Future<String?> downloadLocalModel() async {
-    final error = await local.download(
-      onProgress: (_) => notifyListeners(),
-    );
-    notifyListeners();
-    return error;
-  }
-
-  void cancelLocalDownload() {
-    local.cancelDownload();
-    notifyListeners();
-  }
-
-  Future<void> deleteLocalModel() async {
-    await local.delete();
-    notifyListeners();
-  }
 
   Future<void> setReplyNotifications(bool value) async {
     if (value && !device.notificationPermission) {
@@ -1670,7 +1593,29 @@ class AppState extends ChangeNotifier {
       cloudEnabled = false;
       await _prefs?.setBool('emo.cloud.enabled', false);
     }
+    if (provider.id == 'gemini' || googleTts.apiKey.isEmpty) {
+      googleTts.apiKey = cloud.apiKey;
+    }
     notifyListeners();
+  }
+
+  Future<void> setGoogleTtsVoice(GoogleTtsVoice v) async {
+    googleTts.voice = v;
+    await _prefs?.setString('emo.googleTts.voice', v.id);
+    notifyListeners();
+  }
+
+  Future<void> setGoogleTtsEnabled(bool enabled) async {
+    googleTts.enabled = enabled;
+    await _prefs?.setBool('emo.googleTts.enabled', enabled);
+    notifyListeners();
+  }
+
+  Future<void> previewGoogleTtsVoice(GoogleTtsVoice v) async {
+    final prevVoice = googleTts.voice;
+    googleTts.voice = v;
+    await voice.speak('Hi, I am Emo. This is my ${v.name} voice.');
+    googleTts.voice = prevVoice;
   }
 
   Future<String?> testCloudConfig({
@@ -1832,7 +1777,7 @@ class AppState extends ChangeNotifier {
     _updateTimer?.cancel();
     updateService.close();
     cloud.close();
-    local.close();
+    googleTts.close();
     super.dispose();
   }
 }

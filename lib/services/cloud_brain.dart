@@ -32,7 +32,7 @@ class CloudProvider {
     name: 'Google Gemini',
     endpoint:
         'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-3.5-flash-lite',
     keyUrl: 'https://aistudio.google.com/app/apikey',
   );
 

@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'google_tts_service.dart';
+
 class EmoVoice {
   const EmoVoice({required this.name, required this.locale});
 
@@ -157,6 +159,9 @@ class VoiceService {
     }
   }
 
+  String _lastRecognized = '';
+  bool _finalDispatched = false;
+
   Future<bool> _initSpeech() async {
     if (_speechReady) return available;
     _speechReady = true;
@@ -167,7 +172,12 @@ class VoiceService {
           error = e.errorMsg;
           listening = false;
           onListeningChanged?.call();
-          onError?.call(e.errorMsg);
+          if (!_finalDispatched && _lastRecognized.trim().isNotEmpty) {
+            _finalDispatched = true;
+            onFinal?.call(_lastRecognized.trim());
+          } else {
+            onError?.call(e.errorMsg);
+          }
         },
       );
     } catch (_) {
@@ -181,6 +191,11 @@ class VoiceService {
     if (listening != isListening) {
       listening = isListening;
       onListeningChanged?.call();
+      if (!isListening && !_finalDispatched && _lastRecognized.trim().isNotEmpty) {
+        _finalDispatched = true;
+        final words = _lastRecognized.trim();
+        onFinal?.call(words);
+      }
     }
   }
 
@@ -192,6 +207,8 @@ class VoiceService {
       onError?.call(error!);
       return false;
     }
+    _lastRecognized = '';
+    _finalDispatched = false;
     String? localeId;
     try {
       final locales = await _speech.locales();
@@ -206,8 +223,10 @@ class VoiceService {
       await _speech.listen(
         onResult: (result) {
           if (result.recognizedWords.isEmpty) return;
+          _lastRecognized = result.recognizedWords;
           onPartial?.call(result.recognizedWords);
-          if (result.finalResult) {
+          if (result.finalResult && !_finalDispatched) {
+            _finalDispatched = true;
             onFinal?.call(result.recognizedWords);
           }
         },
@@ -216,7 +235,7 @@ class VoiceService {
           cancelOnError: true,
           listenMode: ListenMode.dictation,
           listenFor: const Duration(seconds: 30),
-          pauseFor: const Duration(seconds: 3),
+          pauseFor: const Duration(seconds: 2),
           localeId: localeId,
         ),
       );
@@ -238,14 +257,56 @@ class VoiceService {
     } catch (_) {}
     listening = false;
     onListeningChanged?.call();
+    if (!_finalDispatched && _lastRecognized.trim().isNotEmpty) {
+      _finalDispatched = true;
+      onFinal?.call(_lastRecognized.trim());
+    }
   }
+
+  GoogleTtsService? googleTts;
+  Future<bool> Function(Uint8List bytes)? onPlayAudio;
+  Future<void> Function()? onStopAudio;
+  bool isSpeaking = false;
+  bool get speaking => isSpeaking;
 
   Future<void> speak(String text) async {
     if (!ttsEnabled || text.trim().isEmpty) return;
+    isSpeaking = true;
+
+    // 1. If Google Cloud TTS is enabled and configured, try cool Journey/Studio AI voice
+    if (googleTts != null &&
+        googleTts!.enabled &&
+        googleTts!.configured &&
+        onPlayAudio != null) {
+      try {
+        await stopPlayback();
+        final bytes = await googleTts!.synthesize(text, rate: rate * 2.0);
+        if (bytes != null && bytes.isNotEmpty) {
+          final played = await onPlayAudio!(bytes);
+          if (played) {
+            isSpeaking = false;
+            return;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. Seamlessly fall back to on-device TTS
     try {
       await _tts.stop();
       await _tts.speak(text);
     } catch (_) {}
+    isSpeaking = false;
+  }
+
+  Future<void> stopPlayback() async {
+    try {
+      await onStopAudio?.call();
+    } catch (_) {}
+    try {
+      await _tts.stop();
+    } catch (_) {}
+    isSpeaking = false;
   }
 
   Future<void> setRate(double value) async {
@@ -258,9 +319,7 @@ class VoiceService {
   Future<void> setEnabled(bool value) async {
     ttsEnabled = value;
     if (!value) {
-      try {
-        await _tts.stop();
-      } catch (_) {}
+      await stopPlayback();
     }
   }
 }

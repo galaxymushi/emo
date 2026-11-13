@@ -6,33 +6,6 @@ import 'package:flutter/services.dart';
 
 import '../models.dart';
 
-class LocalLlmResult {
-  const LocalLlmResult({
-    required this.ok,
-    this.text = '',
-    this.message = '',
-    this.ms = 0,
-    this.loaded = false,
-  });
-
-  factory LocalLlmResult.fromMap(dynamic raw) {
-    if (raw is! Map) return const LocalLlmResult(ok: false);
-    return LocalLlmResult(
-      ok: raw['ok'] == true,
-      text: (raw['text'] as String?) ?? '',
-      message: (raw['message'] as String?) ?? '',
-      ms: (raw['ms'] as num?)?.toInt() ?? 0,
-      loaded: raw['loaded'] == true,
-    );
-  }
-
-  final bool ok;
-  final String text;
-  final String message;
-  final int ms;
-  final bool loaded;
-}
-
 class DeviceBridge {
   static const MethodChannel _channel = MethodChannel('emo/device');
 
@@ -158,106 +131,21 @@ class DeviceBridge {
       return '';
     }
   }
-
-  Future<LocalLlmResult> localLlmStatus() async {
-    if (!isAndroid) return const LocalLlmResult(ok: false);
-    try {
-      final raw = await _channel.invokeMethod<dynamic>('localLlmStatus');
-      return LocalLlmResult.fromMap(raw);
-    } catch (_) {
-      return const LocalLlmResult(ok: false);
-    }
-  }
-
-  /// Whether this APK build carries the model inside its assets.
-  Future<bool> localLlmBundled(String fileName) async {
+  Future<bool> playAudio(Uint8List bytes) async {
     if (!isAndroid) return false;
     try {
-      return await _channel.invokeMethod<bool>(
-            'localLlmBundled',
-            {'fileName': fileName},
-          ) ??
-          false;
+      return await _channel.invokeMethod<bool>('playAudio', {'bytes': bytes}) ?? false;
     } catch (_) {
       return false;
     }
   }
 
-  /// Copies the bundled model out of the APK into the app's private folder.
-  Future<LocalLlmResult> localLlmInstall(String fileName, int bytes) async {
-    if (!isAndroid) {
-      return const LocalLlmResult(
-        ok: false,
-        message: 'The on-device model runs on Android only.',
-      );
-    }
-    try {
-      final raw = await _channel.invokeMethod<dynamic>(
-        'localLlmInstall',
-        {'fileName': fileName, 'bytes': bytes},
-      );
-      return LocalLlmResult.fromMap(raw);
-    } on PlatformException catch (e) {
-      return LocalLlmResult(
-        ok: false,
-        message: e.message ?? 'The model could not be installed.',
-      );
-    } catch (_) {
-      return const LocalLlmResult(
-        ok: false,
-        message: 'The model could not be installed.',
-      );
-    }
-  }
-
-  Future<LocalLlmResult> localLlmLoad(String path, {int maxTokens = 1024}) async {
-    if (!isAndroid) {
-      return const LocalLlmResult(
-        ok: false,
-        message: 'The on-device model runs on Android only.',
-      );
-    }
-    try {
-      final raw = await _channel.invokeMethod<dynamic>(
-        'localLlmLoad',
-        {'path': path, 'maxTokens': maxTokens},
-      );
-      return LocalLlmResult.fromMap(raw);
-    } on PlatformException catch (e) {
-      return LocalLlmResult(ok: false, message: e.message ?? 'The model failed to load.');
-    } catch (_) {
-      return const LocalLlmResult(ok: false, message: 'The model failed to load.');
-    }
-  }
-
-  Future<LocalLlmResult> localLlmGenerate(String prompt) async {
-    if (!isAndroid) return const LocalLlmResult(ok: false);
-    try {
-      final raw = await _channel.invokeMethod<dynamic>(
-        'localLlmGenerate',
-        {'prompt': prompt},
-      );
-      return LocalLlmResult.fromMap(raw);
-    } on PlatformException catch (e) {
-      return LocalLlmResult(
-        ok: false,
-        message: e.message ?? 'The on-device model failed to answer.',
-      );
-    } catch (_) {
-      return const LocalLlmResult(
-        ok: false,
-        message: 'The on-device model failed to answer.',
-      );
-    }
-  }
-
-  Future<void> localLlmUnload() async {
+  Future<void> stopAudio() async {
     if (!isAndroid) return;
     try {
-      await _channel.invokeMethod<dynamic>('localLlmUnload');
+      await _channel.invokeMethod<bool>('stopAudio');
     } catch (_) {}
   }
-
   Future<BridgeResult> syncRoutines(List<Routine> routines) => _call(
         'syncRoutines',
         {'json': _encodeRoutines(routines)},

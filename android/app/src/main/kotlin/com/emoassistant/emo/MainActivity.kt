@@ -99,32 +99,18 @@ class MainActivity : FlutterActivity() {
             )
             "appVersion" -> result.success(appVersion())
             "filesDir" -> result.success(filesDir.absolutePath)
-            "localLlmStatus" -> result.success(LocalLlm.status())
-            "localLlmBundled" -> result.success(
-                LocalLlm.bundled(this, call.argument<String>("fileName") ?: "")
-            )
-            "localLlmInstall" -> runLocal(result) {
-                val bytes = when (val v = call.argument<Any>("bytes")) {
-                    is Number -> v.toLong()
-                    else -> 0L
+            "playAudio" -> {
+                val bytes = call.argument<ByteArray>("bytes")
+                if (bytes != null && bytes.isNotEmpty()) {
+                    result.success(playAudioBytes(bytes))
+                } else {
+                    result.success(false)
                 }
-                LocalLlm.install(
-                    this,
-                    call.argument<String>("fileName") ?: "",
-                    bytes
-                )
             }
-            "localLlmLoad" -> runLocal(result) {
-                LocalLlm.load(
-                    this,
-                    call.argument<String>("path") ?: "",
-                    call.argument<Int>("maxTokens") ?: 1024
-                )
+            "stopAudio" -> {
+                stopAudio()
+                result.success(true)
             }
-            "localLlmGenerate" -> runLocal(result) {
-                LocalLlm.generate(call.argument<String>("prompt") ?: "")
-            }
-            "localLlmUnload" -> runLocal(result) { LocalLlm.unload() }
             "syncRoutines" -> {
                 RoutineStore.save(this, call.argument<String>("json") ?: "[]")
                 result.success(mapOf("ok" to true))
@@ -137,17 +123,6 @@ class MainActivity : FlutterActivity() {
     private fun ok(message: String? = null): Map<String, Any?> =
         mapOf("ok" to true, "message" to message)
 
-    /** Model loading and generation are slow, so they never block the UI thread. */
-    private fun runLocal(result: MethodChannel.Result, block: () -> Map<String, Any?>) {
-        LocalLlm.executor.execute {
-            val outcome = try {
-                block()
-            } catch (t: Throwable) {
-                mapOf("ok" to false, "message" to (t.message ?: "On-device model failed"))
-            }
-            runOnUiThread { result.success(outcome) }
-        }
-    }
 
     private fun fail(message: String, needs: String? = null): Map<String, Any?> =
         mapOf("ok" to false, "message" to message, "needs" to needs)
@@ -629,8 +604,45 @@ class MainActivity : FlutterActivity() {
         return list
     }
 
+    private var mediaPlayer: android.media.MediaPlayer? = null
+
+    private fun playAudioBytes(bytes: ByteArray): Boolean {
+        stopAudio()
+        return try {
+            val temp = java.io.File(cacheDir, "speech.mp3")
+            temp.writeBytes(bytes)
+            mediaPlayer = android.media.MediaPlayer().apply {
+                setDataSource(temp.absolutePath)
+                prepare()
+                start()
+                setOnCompletionListener {
+                    try {
+                        it.release()
+                    } catch (_: Throwable) {}
+                    mediaPlayer = null
+                    try {
+                        temp.delete()
+                    } catch (_: Throwable) {}
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun stopAudio() {
+        try {
+            mediaPlayer?.let {
+                if (it.isPlaying) it.stop()
+                it.release()
+            }
+        } catch (_: Throwable) {}
+        mediaPlayer = null
+    }
+
     override fun onDestroy() {
-        LocalLlm.unload()
+        stopAudio()
         super.onDestroy()
     }
 }

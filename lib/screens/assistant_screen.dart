@@ -96,13 +96,10 @@ class _AssistantScreenState extends State<AssistantScreen> {
     });
   }
 
-  Future<void> _toggleVoice() async {
+  bool _continuousMode = false;
+
+  Future<void> _startListening() async {
     final voice = state.voice;
-    if (_listening) {
-      await voice.stop();
-      if (mounted) setState(() => _listening = false);
-      return;
-    }
     voice.onListeningChanged = () {
       if (mounted) setState(() => _listening = voice.listening);
     };
@@ -112,12 +109,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
     voice.onError = (message) {
       if (!mounted) return;
       setState(() => _listening = false);
-      emoSnack(
-        context,
-        message,
-        icon: Icons.mic_off_rounded,
-        color: EmoColors.warning,
-      );
+      if (!_continuousMode) {
+        emoSnack(
+          context,
+          message,
+          icon: Icons.mic_off_rounded,
+          color: EmoColors.warning,
+        );
+      }
     };
     voice.onFinal = (text) async {
       await voice.stop();
@@ -127,12 +126,83 @@ class _AssistantScreenState extends State<AssistantScreen> {
         _partial = '';
       });
       final command = text.trim();
-      if (command.isEmpty) return;
+      if (command.isEmpty) {
+        if (_continuousMode && mounted) {
+          await Future.delayed(const Duration(milliseconds: 300));
+          if (_continuousMode && mounted && !state.voice.listening) {
+            await _startListening();
+          }
+        }
+        return;
+      }
       await state.submitCommand(command);
+
+      // In continuous mode (like ChatGPT voice), listen again automatically after Emo finishes speaking!
+      if (_continuousMode && mounted) {
+        while (state.busy || state.voice.isSpeaking) {
+          await Future.delayed(const Duration(milliseconds: 250));
+        }
+        await Future.delayed(const Duration(milliseconds: 400));
+        if (_continuousMode && mounted && !state.voice.listening) {
+          await _startListening();
+        }
+      }
     };
     final started = await voice.start();
-    if (!mounted) return;
-    setState(() => _listening = started);
+    if (mounted) {
+      setState(() => _listening = started);
+    }
+  }
+
+  Future<void> _toggleVoice() async {
+    final voice = state.voice;
+    if (voice.speaking) {
+      await voice.stopPlayback();
+      if (_continuousMode && mounted) {
+        await _startListening();
+      }
+      return;
+    }
+    if (_listening) {
+      _continuousMode = false;
+      await voice.stop();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    await _startListening();
+  }
+
+  Future<void> _toggleContinuousMode() async {
+    if (_continuousMode) {
+      _continuousMode = false;
+      if (_listening) {
+        await state.voice.stop();
+      }
+      if (mounted) {
+        setState(() => _listening = false);
+        emoSnack(
+          context,
+          'Hands-Free Voice Mode paused',
+          icon: Icons.mic_off_rounded,
+          color: EmoColors.inkSoft,
+        );
+      }
+      return;
+    }
+
+    _continuousMode = true;
+    if (mounted) {
+      setState(() {});
+      emoSnack(
+        context,
+        'Hands-Free Voice Mode active. Talk freely!',
+        icon: Icons.record_voice_over_rounded,
+        color: EmoColors.success,
+      );
+    }
+    if (!_listening) {
+      await _startListening();
+    }
   }
 
   void _send([String? value]) {
@@ -234,6 +304,14 @@ class _AssistantScreenState extends State<AssistantScreen> {
             ),
           ),
           GlassIconButton(
+            icon: _continuousMode
+                ? Icons.headset_mic_rounded
+                : Icons.mic_none_rounded,
+            size: 40,
+            onTap: _toggleContinuousMode,
+          ),
+          const SizedBox(width: 8),
+          GlassIconButton(
             icon: state.voiceReplies
                 ? Icons.volume_up_rounded
                 : Icons.volume_off_rounded,
@@ -247,18 +325,26 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   Widget _buildMessages(BuildContext context) {
     final messages = state.messages;
-    return ListView.builder(
-      controller: _scroll,
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(18, 6, 18, 14),
-      itemCount: messages.length,
-      itemBuilder: (context, index) {
-        final message = messages[index];
-        return _MessageView(
-          message: message,
-          onGrant: (need) => showPermissionSheet(context, state, need),
-        );
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        if (state.voice.speaking) {
+          state.voice.stopPlayback();
+        }
       },
+      child: ListView.builder(
+        controller: _scroll,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(18, 6, 18, 14),
+        itemCount: messages.length,
+        itemBuilder: (context, index) {
+          final message = messages[index];
+          return _MessageView(
+            message: message,
+            onGrant: (need) => showPermissionSheet(context, state, need),
+          );
+        },
+      ),
     );
   }
 
@@ -279,7 +365,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                _partial.isEmpty ? 'Listening… speak now' : _partial,
+                state.voice.speaking
+                    ? 'Emo is speaking… tap to interrupt'
+                    : (_partial.isEmpty
+                        ? (_continuousMode
+                            ? 'Hands-free chat… speak anytime'
+                            : 'Listening… speak now')
+                        : _partial),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
