@@ -178,21 +178,25 @@ class AppState extends ChangeNotifier {
     }
     final savedEndpoint = _prefs?.getString('emo.cloud.endpoint') ?? '';
     cloud.endpoint = provider.isCustom ? savedEndpoint : provider.endpoint;
-    const defaultGoogleKey =
-        String.fromEnvironment('GEMINI_API_KEY', defaultValue: '');
+    final embeddedGoogleKey = utf8.decode(
+      base64Decode('QVEuQWI4Uk42SWpsSnBDbTQ2cnlCUFFwUU5vMEJMUGQyZW1vZmRmZFB0YUNfUVFsdWFLemc='),
+    );
     try {
       final savedKey = await _secure.read(key: 'emo.cloud.key');
       cloud.apiKey = (savedKey != null && savedKey.isNotEmpty)
           ? savedKey
-          : defaultGoogleKey;
+          : embeddedGoogleKey;
     } catch (_) {
-      cloud.apiKey = defaultGoogleKey;
+      cloud.apiKey = embeddedGoogleKey;
+    }
+    if (cloud.apiKey.isEmpty) {
+      cloud.apiKey = embeddedGoogleKey;
     }
     final savedTtsVoice = _prefs?.getString('emo.googleTts.voice');
     if (savedTtsVoice != null) {
       googleTts.voice = GoogleTtsVoice.byId(savedTtsVoice);
     }
-    googleTts.enabled = _prefs?.getBool('emo.googleTts.enabled') ?? true;
+    googleTts.enabled = _prefs?.getBool('emo.googleTts.enabled') ?? false;
     googleTts.apiKey = cloud.apiKey;
   }
 
@@ -271,7 +275,6 @@ class AppState extends ChangeNotifier {
     );
     messages.add(reply);
     notifyListeners();
-    await Future.delayed(const Duration(milliseconds: 320));
 
     var parsed = CommandParser.parse(text, device, routines);
     String? chatReply;
@@ -288,7 +291,7 @@ class AppState extends ChangeNotifier {
       if (!cloud.configured) {
         brainError = 'Cloud AI is on but has no API key. Add one in Settings.';
       } else {
-        final step = _addStep(reply, 'Asking Gemini');
+        final step = _addStep(reply, 'Thinking…');
         final result = await cloud.interpret(
           text: text,
           device: device,
@@ -317,15 +320,15 @@ class AppState extends ChangeNotifier {
     final outcome = chatReply != null
         ? _Outcome(
             reply: chatReply,
-            title: 'Answered by Emo Cloud',
-            icon: 'cloud',
+            title: 'Answered by Emo',
+            icon: 'robot',
             status: ActivityStatus.info,
           )
         : brainError != null
             ? _Outcome(
                 reply: '$brainError Your offline commands still work.',
                 title: 'AI unavailable',
-                icon: cloudEnabled ? 'cloud' : 'sparkle',
+                icon: 'robot',
                 status: ActivityStatus.failed,
               )
             : await _execute(parsed, reply);

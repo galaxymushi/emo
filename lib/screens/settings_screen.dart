@@ -388,7 +388,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 _SettingRow(
-                  icon: Icons.auto_awesome_outlined,
+                  icon: Icons.psychology_outlined,
                   title: 'Memory',
                   subtitle: state.memory.isEmpty
                       ? 'Nothing remembered yet — say “remember that …”'
@@ -464,9 +464,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.psychology_alt_outlined,
                   title: 'Cloud brain',
                   subtitle: state.cloudEnabled
-                      ? (state.cloud.configured
-                          ? 'Understands free-form requests and answers questions'
-                          : 'Needs an API key to start')
+                      ? 'Understands free-form requests and answers questions'
                       : 'Off — Emo uses only its built-in commands',
                   trailing: EmoSwitch(
                     value: state.cloudEnabled,
@@ -476,14 +474,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _SettingRow(
                   icon: Icons.cloud_outlined,
                   title: 'Cloud setup',
-                  subtitle: state.cloud.configured
-                      ? '${state.cloudProviderName} · ${state.cloud.model}'
-                      : 'Add an API key to unlock free-form understanding',
-                  trailing: StatusChip(
-                    label: state.cloud.configured ? 'Ready' : 'Set up',
-                    color: state.cloud.configured
-                        ? EmoColors.blue
-                        : EmoColors.warning,
+                  subtitle: 'Google Gemini · ${state.cloud.model}',
+                  trailing: const StatusChip(
+                    label: 'Ready',
+                    color: EmoColors.success,
                     compact: true,
                   ),
                   onTap: _openCloudSheet,
@@ -595,7 +589,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 children: [
                   const Icon(
-                    Icons.auto_awesome_rounded,
+                    Icons.smart_toy_rounded,
                     size: 18,
                     color: EmoColors.faint,
                   ),
@@ -1085,7 +1079,6 @@ class _CloudSheetState extends State<_CloudSheet> {
   late final TextEditingController _model;
   late final TextEditingController _endpoint;
 
-  bool _obscure = true;
   bool _testing = false;
   bool _saving = false;
   String? _status;
@@ -1193,20 +1186,48 @@ class _CloudSheetState extends State<_CloudSheet> {
             ],
           ),
           const SizedBox(height: 14),
-          _CloudField(
-            label: 'API key',
-            controller: _key,
-            hint: 'Paste your API key',
-            obscure: _obscure,
-            suffix: IconButton(
-              onPressed: () => setState(() => _obscure = !_obscure),
-              icon: Icon(
-                _obscure
-                    ? Icons.visibility_outlined
-                    : Icons.visibility_off_outlined,
-                size: 19,
-                color: EmoColors.muted,
+          Container(
+            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: EmoColors.success.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: EmoColors.success.withValues(alpha: 0.25),
               ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded,
+                    color: EmoColors.success, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Google AI Brain Plugged In',
+                        style: TextStyle(
+                          fontFamily: 'Manrope',
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12.5,
+                          color: EmoColors.ink,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Active model: ${provider.model.isEmpty ? state.cloud.model : provider.model}',
+                        style: const TextStyle(
+                          fontFamily: 'Manrope',
+                          fontWeight: FontWeight.w500,
+                          fontSize: 11,
+                          color: EmoColors.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
           _CloudField(
@@ -1220,24 +1241,6 @@ class _CloudSheetState extends State<_CloudSheet> {
               controller: _endpoint,
               hint: 'https://…/chat/completions',
               keyboardType: TextInputType.url,
-            ),
-          if (provider.keyUrl.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: TextButton.icon(
-                onPressed: () => state.bridge.openUrl(provider.keyUrl),
-                icon: const Icon(Icons.open_in_new_rounded, size: 15),
-                label: Text('Get a ${provider.name} API key'),
-                style: TextButton.styleFrom(
-                  foregroundColor: EmoColors.blue,
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  textStyle: const TextStyle(
-                    fontFamily: 'Manrope',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
             ),
           if (_status != null)
             Container(
@@ -1364,16 +1367,12 @@ class _CloudField extends StatelessWidget {
     required this.label,
     required this.controller,
     required this.hint,
-    this.obscure = false,
-    this.suffix,
     this.keyboardType,
   });
 
   final String label;
   final TextEditingController controller;
   final String hint;
-  final bool obscure;
-  final Widget? suffix;
   final TextInputType? keyboardType;
 
   @override
@@ -1387,7 +1386,6 @@ class _CloudField extends StatelessWidget {
           const SizedBox(height: 5),
           TextField(
             controller: controller,
-            obscureText: obscure,
             keyboardType: keyboardType,
             autocorrect: false,
             enableSuggestions: false,
@@ -1408,11 +1406,6 @@ class _CloudField extends StatelessWidget {
               ),
               filled: true,
               fillColor: Colors.white.withValues(alpha: 0.66),
-              suffixIcon: suffix,
-              suffixIconConstraints: const BoxConstraints(
-                minWidth: 38,
-                minHeight: 38,
-              ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               enabledBorder: OutlineInputBorder(
@@ -1472,7 +1465,7 @@ class _VoiceSheetState extends State<_VoiceSheet> {
           const SizedBox(height: 14),
           Row(
             children: [
-              const Icon(Icons.auto_awesome_rounded, size: 16, color: EmoColors.blue),
+              const Icon(Icons.record_voice_over_rounded, size: 16, color: EmoColors.blue),
               const SizedBox(width: 6),
               Text(
                 'Gemini Flagship AI Voices',

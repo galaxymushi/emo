@@ -46,7 +46,7 @@ class AutomationsScreen extends StatelessWidget {
             ),
             PrimaryButton(
               label: 'Create routine',
-              icon: Icons.auto_awesome_rounded,
+              icon: Icons.add_rounded,
               onTap: () => _openSheet(context, null),
             ),
             const SizedBox(height: 14),

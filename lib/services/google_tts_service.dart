@@ -143,10 +143,15 @@ class GoogleTtsService {
     final key = apiKey.trim();
     if (key.isEmpty || text.trim().isEmpty) return null;
 
-    if (voice.isGemini) {
+    final isAiStudioKey = key.startsWith('AQ.') || key.startsWith('AIza');
+
+    if (isAiStudioKey || voice.isGemini) {
       final geminiAudio = await _synthesizeGemini(text.trim(), key);
       if (geminiAudio != null) return geminiAudio;
-      return _synthesizeCloud(text.trim(), key, rate: rate, pitch: pitch);
+      if (!isAiStudioKey) {
+        return _synthesizeCloud(text.trim(), key, rate: rate, pitch: pitch);
+      }
+      return null;
     } else {
       final cloudAudio =
           await _synthesizeCloud(text.trim(), key, rate: rate, pitch: pitch);
@@ -189,7 +194,7 @@ class GoogleTtsService {
             headers: {'Content-Type': 'application/json; charset=utf-8'},
             body: payload,
           )
-          .timeout(const Duration(seconds: 14));
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode != 200) return null;
 

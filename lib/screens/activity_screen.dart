@@ -279,7 +279,7 @@ class _LiveCard extends StatelessWidget {
       child: Row(
         children: [
           const IconBadge(
-            icon: Icons.auto_awesome_rounded,
+            icon: Icons.smart_toy_rounded,
             active: true,
             size: 42,
             radius: 14,

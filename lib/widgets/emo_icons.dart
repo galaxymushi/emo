@@ -85,9 +85,12 @@ IconData emoIcon(String key) {
       return Icons.help_outline_rounded;
     case 'cloud':
       return Icons.cloud_outlined;
+    case 'brain':
+      return Icons.psychology_rounded;
+    case 'robot':
     case 'sparkle':
     default:
-      return Icons.auto_awesome_rounded;
+      return Icons.smart_toy_rounded;
   }
 }
 

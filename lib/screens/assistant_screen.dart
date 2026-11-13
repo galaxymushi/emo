@@ -268,8 +268,8 @@ class _AssistantScreenState extends State<AssistantScreen> {
                     ),
                     const SizedBox(width: 7),
                     const Icon(
-                      Icons.auto_awesome_rounded,
-                      size: 13,
+                      Icons.smart_toy_rounded,
+                      size: 15,
                       color: EmoColors.blue,
                     ),
                   ],
@@ -629,8 +629,8 @@ class _MessageView extends StatelessWidget {
                   ],
                 ),
                 child: const Icon(
-                  Icons.auto_awesome_rounded,
-                  size: 14,
+                  Icons.smart_toy_rounded,
+                  size: 15,
                   color: Colors.white,
                 ),
               ),
